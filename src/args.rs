@@ -1,10 +1,20 @@
 use std::env;
 
 #[derive(Default)]
+pub enum CanDataInput{
+    #[default]
+    File,
+    Socket,
+    Stdin,
+}
+
+#[derive(Default)]
 pub struct Args{
     pub dbcfile: String,
     pub input: String,
+    pub candatainput: CanDataInput,
 }
+
 
 pub fn process_args() -> Args {
     let mut argsi = env::args().skip(1); // skip program name
@@ -24,6 +34,10 @@ pub fn process_args() -> Args {
                     .next()
                     .expect("--input requires a value");
                 args.input = value;
+            }
+
+            "--candump" | "-f" => {
+                args.candatainput = CanDataInput::File;
             }
 
             _ => {
