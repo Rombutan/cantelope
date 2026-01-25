@@ -12,7 +12,9 @@ pub enum CanDataInput{
 pub struct Args{
     pub dbcfile: String,
     pub input: String,
+    pub output: String,
     pub candatainput: CanDataInput,
+    pub cache_ms: f64,
 }
 
 
@@ -38,6 +40,15 @@ pub fn process_args() -> Args {
 
             "--candump" | "-f" => {
                 args.candatainput = CanDataInput::File;
+            }
+
+            
+            "--cache-ms" | "-c" => {
+                args.cache_ms = argsi.next().expect("--cache-ms requires a value").parse().unwrap();
+            }
+
+            "--output" | "-o" => {
+                args.output = argsi.next().expect("--output requires a value").parse().unwrap();
             }
 
             _ => {

@@ -5,5 +5,7 @@ edition = "2024"
 
 [dependencies]
 arrow = "57.2.0"
-dbc-rs = "0.4"
+#dbc-rs = "0.4"
+dbc-rs = { git = "https://github.com/Rombutan/dbc-rs.git" }
+parquet = "57.2.0"
 

@@ -3,10 +3,15 @@ use dbc_rs::Dbc;
 use std::fs;
 
 // Arrow IP elements
-use arrow::datatypes::{Schema, Field, DataType};
 use std::sync::Arc;
+use arrow::datatypes::{DataType, Schema, Field};
 
-// Arrow parquet elements
+// Literally only for cleaner print
+use std::io::{self, Write};
+
+// Custom data storage helpers
+pub mod store;
+use store::{GenericColumn, Column};
 
 // Custom argument parsing
 pub mod args; 
@@ -35,54 +40,137 @@ fn main() {
     let dbc = Dbc::parse(&dbc_content).unwrap(); // Parse DBC
 
     // ------- CREATE SCHEMA
-    let mut fields: Vec<Field> = Vec::new();
-    
+    let mut base_row_size = 0; // Just to generate a cool "uncompressed data rate" number
+    let mut fields: Vec<Field> = Vec::new(); // vec of column descriptions, later dumped into Arc<Schema>
+    let mut columns: Vec<GenericColumn> = Vec::new(); // This vec actually stores the values
+    let mut is_filled: Vec<bool> = Vec::new(); // This will keep track of which values have been filled so ones which haven't can be null balanced
+
     fields.push(Field::new(
         "Time_ms",
         DataType::Float64,
         false, // Time is the only column that must exist in all rows.
     ));
 
+    columns.push(GenericColumn::F64(Column::new())); // Column for time
+
+    is_filled.push(true); // This element of the map won't actually be used, but is needed for indecies to align
+
     for message in dbc.messages().iter(){
         for signal in message.signals().iter(){
-            println!();
-            print!("{} : ", &signal.name());
-            if(signal.length() == 1 
+            is_filled.push(false); // If I ever update this to exclude ANY signals which are present in the DBC, I will need to move this into the blocks below
+            if  signal.length() == 1  
                 && signal.is_unsigned() 
                 && signal.factor().is_nearly(1.0) 
-                && signal.offset().is_nearly(0.0)){
-                print!("Boolean");
-                continue;
+                && signal.offset().is_nearly(0.0) { // Definetely a boolean
+                base_row_size += 1;
+                fields.push(Field::new(signal.name(), DataType::Boolean, true));
+                columns.push(GenericColumn::Bool(Column::new()));
+            
+            } else if (signal.factor() % 1.0).is_nearly(1.0) {   // Definetely an integer
+                if signal.min() >= f64::from(i8::MIN) && signal.max() <= f64::from(i8::MAX) {    // Fits in i8
+                    base_row_size+=8;
+                    fields.push(Field::new(signal.name(), DataType::Int8, true));
+                    columns.push(GenericColumn::I8(Column::new()));
+                
+                } else if signal.min() >= f64::from(i16::MIN) && signal.max() <= f64::from(i16::MAX) {  // Fits in i16 
+                    base_row_size+=16;
+                    fields.push(Field::new(signal.name(), DataType::Int16, true));
+                    columns.push(GenericColumn::I16(Column::new()));
+
+                } else if signal.min() >= f64::from(i32::MIN) && signal.max() <= f64::from(i32::MAX) {  // Fits in i32
+                    base_row_size+=32;
+                    fields.push(Field::new(signal.name(), DataType::Int32, true));
+                    columns.push(GenericColumn::I32(Column::new()));
+                
+                }  else {  // must fits in i64 :shrug 
+                    base_row_size+=64;
+                    fields.push(Field::new(signal.name(), DataType::Int64, true));
+                    columns.push(GenericColumn::I64(Column::new()));
+                }
+            
+            } else {    // Float
+//                if signal.min() >= f64::from(f16::MIN) && signal.max() <= f64::from(f16::MAX) {   // Fits in f16 (Currently only works in rust-unstable
+//                    print!("f16");
+//                    base_row_size+=16;
+//                    fields.push(Field::new(signal.name(), DataType::Float16, true));
+//                }
+                
+                if signal.min() >= f64::from(f32::MIN) && signal.max() <= f64::from(f32::MAX) {
+                    base_row_size+=32;
+                    fields.push(Field::new(signal.name(), DataType::Float32, true));
+                    columns.push(GenericColumn::F32(Column::new()));
+                
+                } else { // Must fits in f64 :shrug
+                    base_row_size+=64;
+                    fields.push(Field::new(signal.name(), DataType::Float64, true));
+                    columns.push(GenericColumn::F64(Column::new()));
+                }
             }
         }
     }
+    println!("\nBasis row size: {} bits", base_row_size);
     let schema = Arc::new(Schema::new(fields));
     // ------
 
 
     let mut parser = candumpparse::CanDumpParser::new(&args.input).unwrap();
 
+    parser.parse(); // Data from first can packet ignored :(
+    let time_start = parser.get_timestamp();
+    let mut num_chunks = 0;
+
     let mut exit = false;
     while !exit { // Message recieve loop
         exit = parser.parse();
-        if exit {continue;} // Prevents continued execution resulting in duplicated values when file is over
+        //if exit {continue;} // Prevents continued execution resulting in duplicated values when file is over, breaks finishing of last row
 
-        println!(
-            "Timestamp: {}, ID: {:X}, Data: {:?}",
-            parser.get_timestamp(),
-            parser.get_id(),
-            parser.get_data()
-        );
+        let relative_time_rcv = (parser.get_timestamp() - time_start)*1000.0; // time since start of recording
+
         match dbc.decode(parser.get_id(), &parser.get_data(), false) {
             Ok(decoded) => {
-                println!("  Decoded {} signals:", decoded.len());
                 for signal in decoded.iter() {
-                    let unit_str = signal.unit.map(|u| format!(" {}", u)).unwrap_or_default();
-                    println!("    {}: {}{}", signal.name, signal.value, unit_str);
+                    let col = &mut columns[schema.index_of(signal.name).unwrap()];
+                    if !is_filled[schema.index_of(signal.name).unwrap()] { // Only save the first value from each chunk (as opposed to prev version saving last)
+                        match col {
+                            GenericColumn::Bool(c) => c.push(Some(signal.value.is_nearly(1.0))),
+                            GenericColumn::I8(c) => c.push(Some(signal.value as i8)),
+                            GenericColumn::I32(c) => c.push(Some(signal.value as i32)),
+                            GenericColumn::I64(c) => c.push(Some(signal.value as i64)),
+//                            GenericColumn::F16(c) => c.push(Some(f16::from(signal.value))),
+                            GenericColumn::F32(c) => c.push(Some(signal.value as f32)),
+                            GenericColumn::F64(c) => c.push(Some(signal.value)),
+                            _ => {}
+                        }
+                        is_filled[schema.index_of(signal.name).unwrap()] =  true;
+                    }
                 }
             }
-            Err(e) => println!("  Error: {}", e),
+            Err(e) => println!("Signal: {} Data: {:02x?}  Error: {}", parser.get_id(), parser.get_data(), e),
+            //Err(e) => _ = e,
         }
-        
+        if relative_time_rcv > (&args.cache_ms * f64::from(num_chunks)) || exit{
+            let col = &mut columns[schema.index_of("Time_ms").unwrap()];
+            is_filled[schema.index_of("Time_ms").unwrap()] = true;
+            match col {
+                    GenericColumn::F64(c) => c.push(Some(relative_time_rcv)),
+                    _ => {}
+            }
+            let mut empty_cols = 0;
+            for (index, value) in is_filled.iter().enumerate() {
+                if !value {
+                    columns[index].push_null();
+                    empty_cols += 1;
+                }
+            }
+            num_chunks += 1;
+            is_filled.fill(false);
+            if num_chunks % 250 == 0 {
+                print!("\rRow #{} with {} empty fields", num_chunks, empty_cols);
+                io::stdout().flush().unwrap();
+            }
+        }
     }
+    println!("");
+    let batch = store::finish_record_batch(columns, schema);
+    store::write_record_batch_to_parquet(&batch, &args.output).unwrap();
 }
