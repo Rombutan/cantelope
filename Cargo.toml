@@ -7,5 +7,5 @@ edition = "2024"
 arrow = "57.2.0"
 #dbc-rs = "0.4"
 dbc-rs = { git = "https://github.com/Rombutan/dbc-rs.git" }
+candump = { git = "https://github.com/Rombutan/candump-rs.git" }
 parquet = "57.2.0"
-
