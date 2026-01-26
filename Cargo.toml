@@ -3,7 +3,11 @@ name = "cantelope"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+socket = ["dep:socketcan"]
+
 [dependencies]
+socketcan = { version = '3.5.0', optional = true }
 arrow = "57.2.0"
 #dbc-rs = "0.4"
 dbc-rs = { git = "https://github.com/Rombutan/dbc-rs.git" }

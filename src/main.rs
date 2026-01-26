@@ -19,6 +19,8 @@ pub mod args;
 // Custom Candump parsing
 use candump::CanDumpParser;
 
+use crate::args::CanDataInput;
+
 // Used for type decisions only
 trait FloatExt {
     fn is_nearly(&self, target: f64) -> bool;
@@ -116,16 +118,45 @@ fn main() {
     let schema = Arc::new(Schema::new(fields));
     // ------
 
-    let mut parser = CanDumpParser::new(&args.input).unwrap();
+    let mut parser = CanDumpParser::new("/dev/null").unwrap();
+    let stdin = io::stdin();
 
-    parser.parse(); // Data from first can packet ignored :(
-    let time_start = parser.get_timestamp();
+    let time_start;
+
+    match &args.candatainput {
+        CanDataInput::File => {
+            parser.parse();
+            time_start = parser.get_timestamp();
+        }
+        CanDataInput::Stdin => {
+            let mut nextline = String::new();
+            stdin.read_line(&mut nextline).unwrap();
+            parser.parse_string(nextline);
+            time_start = parser.get_timestamp();
+        }
+        CanDataInput::Socket => {
+            panic!("Socketcan not yet supported")
+        }
+    }
+
     let mut num_chunks = 0;
 
     let mut exit = false;
     while !exit {
         // Message recieve loop
-        exit = parser.parse();
+        match &args.candatainput {
+            CanDataInput::File => {
+                exit = parser.parse();
+            }
+            CanDataInput::Stdin => {
+                let mut nextline = String::new();
+                stdin.read_line(&mut nextline).unwrap();
+                exit = parser.parse_string(nextline);
+            }
+            CanDataInput::Socket => {
+                panic!("Socketcan not yet supported")
+            }
+        }
         //if exit {continue;} // Prevents continued execution resulting in duplicated values when file is over, breaks finishing of last row
 
         let relative_time_rcv = (parser.get_timestamp() - time_start) * 1000.0; // time since start of recording
