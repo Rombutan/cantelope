@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use arrow::array::*;
+use arrow::buffer::{BooleanBuffer, NullBuffer};
 use arrow::datatypes::*;
 use arrow::record_batch::RecordBatch;
 
@@ -89,13 +90,36 @@ impl GenericColumn {
 
     pub fn finish(self) -> Arc<dyn Array> {
         match self {
-            GenericColumn::Bool(c) => Arc::new(BooleanArray::from(c.values)),
-            GenericColumn::I8(c) => Arc::new(Int8Array::from(c.values)),
-            GenericColumn::I16(c) => Arc::new(Int16Array::from(c.values)),
-            GenericColumn::I32(c) => Arc::new(Int32Array::from(c.values)),
-            GenericColumn::I64(c) => Arc::new(Int64Array::from(c.values)),
-            GenericColumn::F32(c) => Arc::new(Float32Array::from(c.values)),
-            GenericColumn::F64(c) => Arc::new(Float64Array::from(c.values)),
+            GenericColumn::Bool(c) => {
+                // BooleanArray is unique because values are stored as bits, not bytes
+                let val_buf = BooleanBuffer::from(c.values);
+                let null_buf = NullBuffer::from(c.valid);
+                Arc::new(BooleanArray::new(val_buf, Some(null_buf)))
+            }
+            GenericColumn::I8(c) => {
+                let null_buf = NullBuffer::from(c.valid);
+                Arc::new(Int8Array::new(c.values.into(), Some(null_buf)))
+            }
+            GenericColumn::I16(c) => {
+                let null_buf = NullBuffer::from(c.valid);
+                Arc::new(Int16Array::new(c.values.into(), Some(null_buf)))
+            }
+            GenericColumn::I32(c) => {
+                let null_buf = NullBuffer::from(c.valid);
+                Arc::new(Int32Array::new(c.values.into(), Some(null_buf)))
+            }
+            GenericColumn::I64(c) => {
+                let null_buf = NullBuffer::from(c.valid);
+                Arc::new(Int64Array::new(c.values.into(), Some(null_buf)))
+            }
+            GenericColumn::F32(c) => {
+                let null_buf = NullBuffer::from(c.valid);
+                Arc::new(Float32Array::new(c.values.into(), Some(null_buf)))
+            }
+            GenericColumn::F64(c) => {
+                let null_buf = NullBuffer::from(c.valid);
+                Arc::new(Float64Array::new(c.values.into(), Some(null_buf)))
+            }
         }
     }
 }
