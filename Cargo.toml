@@ -13,4 +13,4 @@ ctrlc = "3.4"
 dbc-rs = { git = "https://github.com/Rombutan/dbc-rs.git" }
 candump = { git = "https://github.com/Rombutan/candump-rs.git" }
 arrow = { version = "57.2.0", default-features = false }
-parquet = { version = "57.2.0", default-features = false, features = ["arrow"] }
+parquet = { version = "57.2.0", default-features = false, features = ["arrow", "snap"] }

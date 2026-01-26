@@ -28,6 +28,8 @@ pub mod socketwrap;
 // Use ctrl+c as exit signal in stdin and socket mode
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use std::{thread, time::Duration};
+
 // Used for type decisions only
 trait FloatExt {
     fn is_nearly(&self, target: f64) -> bool;
@@ -45,6 +47,14 @@ fn main() {
     let args = args::process_args(); // Load arguments into a struct
 
     let dbc_content = fs::read_to_string(&args.dbcfile).unwrap(); // Load DBC file contents into string
+
+    let handle = std::thread::spawn(move || {
+        data_loop(&args, &dbc_content);
+    });
+    handle.join().unwrap();
+}
+
+fn data_loop(args: &args::Args, dbc_content: &String) {
     let dbc = Dbc::parse(&dbc_content).unwrap(); // Parse DBC
 
     // ------- CREATE SCHEMA

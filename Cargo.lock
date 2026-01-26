@@ -264,7 +264,7 @@ checksum = "b35204fbdc0b3f4446b89fc1ac2cf84a8a68971995d0bf2e925ec7cd960f9cb3"
 [[package]]
 name = "candump"
 version = "0.1.0"
-source = "git+https://github.com/Rombutan/candump-rs.git#453631e0e152f592aa9d9d72fdb210d80ce307fe"
+source = "git+https://github.com/Rombutan/candump-rs.git#55618f437af7345f6c5fc442ab0cf1bb0bcc761e"
 
 [[package]]
 name = "cantelope"
@@ -736,6 +736,7 @@ dependencies = [
  "num-traits",
  "paste",
  "seq-macro",
+ "snap",
  "thrift",
  "twox-hash",
 ]
@@ -867,6 +868,12 @@ name = "shlex"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
+
+[[package]]
+name = "snap"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b6b67fb9a61334225b5b790716f609cd58395f895b3fe8b328786812a40bc3b"
 
 [[package]]
 name = "socket2"
