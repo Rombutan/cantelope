@@ -8,6 +8,7 @@ socket = ["dep:socketcan"]
 
 [dependencies]
 socketcan = { version = '3.5.0', optional = true }
+ctrlc = "3.4"
 arrow = "57.2.0"
 #dbc-rs = "0.4"
 dbc-rs = { git = "https://github.com/Rombutan/dbc-rs.git" }

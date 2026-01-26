@@ -21,6 +21,13 @@ use candump::CanDumpParser;
 
 use crate::args::CanDataInput;
 
+// SocketCAN
+#[cfg(feature = "socket")]
+pub mod socketwrap;
+
+// Use ctrl+c as exit signal in stdin and socket mode
+use std::sync::atomic::{AtomicBool, Ordering};
+
 // Used for type decisions only
 trait FloatExt {
     fn is_nearly(&self, target: f64) -> bool;
@@ -119,49 +126,86 @@ fn main() {
     // ------
 
     let mut parser = CanDumpParser::new("/dev/null").unwrap();
+
+    #[cfg(feature = "socket")]
+    let mut cansocket: Option<socketwrap::CanWrapper> = None;
     let stdin = io::stdin();
 
     let time_start;
 
     match &args.candatainput {
         CanDataInput::File => {
+            _ = parser = CanDumpParser::new(&args.input).unwrap();
             parser.parse();
             time_start = parser.get_timestamp();
         }
         CanDataInput::Stdin => {
             let mut nextline = String::new();
             stdin.read_line(&mut nextline).unwrap();
-            parser.parse_string(nextline);
+            _ = parser.parse_string(nextline);
             time_start = parser.get_timestamp();
         }
+        #[cfg(feature = "socket")]
         CanDataInput::Socket => {
-            panic!("Socketcan not yet supported")
+            cansocket = Some(socketwrap::CanWrapper::new(&args.input).unwrap());
+            _ = cansocket.as_mut().unwrap().parse();
+            time_start = cansocket.as_mut().unwrap().get_timestamp();
+        }
+        #[cfg(not(feature = "socket"))]
+        CanDataInput::Socket => {
+            panic!("Socketcan not enabled in this build")
         }
     }
 
-    let mut num_chunks = 0;
+    let exit = Arc::new(AtomicBool::new(false));
+    let ex = exit.clone();
 
-    let mut exit = false;
-    while !exit {
+    ctrlc::set_handler(move || {
+        println!("\nShutdown signal received...");
+        ex.store(true, Ordering::SeqCst);
+    })
+    .expect("Error setting Ctrl-C handler");
+
+    let mut num_chunks = 0;
+    while !exit.load(Ordering::SeqCst) {
         // Message recieve loop
+        let timestamp;
+        let id;
+        let data;
         match &args.candatainput {
             CanDataInput::File => {
-                exit = parser.parse();
+                exit.store(parser.parse(), Ordering::SeqCst);
+
+                timestamp = parser.get_timestamp();
+                id = parser.get_id();
+                data = parser.get_data();
             }
             CanDataInput::Stdin => {
                 let mut nextline = String::new();
                 stdin.read_line(&mut nextline).unwrap();
-                exit = parser.parse_string(nextline);
+                exit.store(parser.parse_string(nextline), Ordering::SeqCst);
+
+                timestamp = parser.get_timestamp();
+                id = parser.get_id();
+                data = parser.get_data();
             }
+            #[cfg(feature = "socket")]
+            CanDataInput::Socket => {
+                cansocket.as_mut().unwrap().parse().unwrap();
+                timestamp = cansocket.as_mut().unwrap().get_timestamp();
+                id = cansocket.as_mut().unwrap().get_id();
+                data = cansocket.as_mut().unwrap().get_data();
+            }
+            #[cfg(not(feature = "socket"))]
             CanDataInput::Socket => {
                 panic!("Socketcan not yet supported")
             }
         }
         //if exit {continue;} // Prevents continued execution resulting in duplicated values when file is over, breaks finishing of last row
 
-        let relative_time_rcv = (parser.get_timestamp() - time_start) * 1000.0; // time since start of recording
+        let relative_time_rcv = (timestamp - time_start) * 1000.0; // time since start of recording
 
-        match dbc.decode(parser.get_id(), &parser.get_data(), false) {
+        match dbc.decode(id, &data, false) {
             Ok(decoded) => {
                 for signal in decoded.iter() {
                     let col = &mut columns[schema.index_of(signal.name).unwrap()];
@@ -181,15 +225,12 @@ fn main() {
                     }
                 }
             }
-            Err(e) => println!(
-                "Signal: {} Data: {:02x?}  Error: {}",
-                parser.get_id(),
-                parser.get_data(),
-                e
-            ),
+            Err(e) => println!("Signal: {} Data: {:02x?}  Error: {}", id, &data, e),
             //Err(e) => _ = e,
         }
-        if relative_time_rcv > (&args.cache_ms * f64::from(num_chunks)) || exit {
+        if relative_time_rcv > (&args.cache_ms * f64::from(num_chunks))
+            || exit.load(Ordering::SeqCst)
+        {
             let col = &mut columns[schema.index_of("Time_ms").unwrap()];
             is_filled[schema.index_of("Time_ms").unwrap()] = true;
             match col {
