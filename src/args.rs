@@ -18,12 +18,13 @@ pub struct Args {
     pub aux_outputs: Vec<String>,
     pub aux_ms: f64,
     pub aux_num: u32,
+    pub en_ipm: bool,
 }
 
 pub fn process_args() -> Args {
     let mut argsi = env::args().skip(1); // skip program name
     let mut args = Args::default();
-
+    args.en_ipm = false;
     while let Some(arg) = argsi.next() {
         match arg.as_str() {
             "--dbc" | "-d" => {
@@ -68,9 +69,10 @@ pub fn process_args() -> Args {
                     .expect("--output requires a value")
                     .parse()
                     .unwrap();
+                args.en_ipm = true;
             }
 
-            "--aux" | "-a" => {
+            "--plot" | "-p" => {
                 args.aux_outputs.push(
                     argsi
                         .next()
@@ -78,14 +80,6 @@ pub fn process_args() -> Args {
                         .parse()
                         .unwrap(),
                 );
-            }
-
-            "--aux-ms" | "-ap" => {
-                args.aux_ms = argsi
-                    .next()
-                    .expect("--aux-ms requires a value")
-                    .parse()
-                    .unwrap();
             }
 
             _ => {

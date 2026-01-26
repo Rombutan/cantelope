@@ -28,7 +28,10 @@ pub mod socketwrap;
 // Use ctrl+c as exit signal in stdin and socket mode
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use std::{thread, time::Duration};
+// Allows data loop to send decoded values back to main thread
+use std::sync::mpsc;
+type DataPoint = (String, f64);
+use std::sync::mpsc::SyncSender;
 
 // Used for type decisions only
 trait FloatExt {
@@ -48,13 +51,21 @@ fn main() {
 
     let dbc_content = fs::read_to_string(&args.dbcfile).unwrap(); // Load DBC file contents into string
 
+    let (tx, rx) = mpsc::sync_channel::<DataPoint>(100); // For transfers from the data loop thread to main
+
     let handle = std::thread::spawn(move || {
-        data_loop(&args, &dbc_content);
+        data_loop(&args, &dbc_content, tx);
     });
-    handle.join().unwrap();
+
+    for (key, value) in rx {
+        println!("Received from thread: {} => {}", key, value);
+
+        // This is where iced-plotters will eventually
+        // update the graph state.
+    }
 }
 
-fn data_loop(args: &args::Args, dbc_content: &String) {
+fn data_loop(args: &args::Args, dbc_content: &String, tx: SyncSender<DataPoint>) {
     let dbc = Dbc::parse(&dbc_content).unwrap(); // Parse DBC
 
     // ------- CREATE SCHEMA
@@ -221,17 +232,23 @@ fn data_loop(args: &args::Args, dbc_content: &String) {
                     let col = &mut columns[schema.index_of(signal.name).unwrap()];
                     if !is_filled[schema.index_of(signal.name).unwrap()] {
                         // Only save the first value from each chunk (as opposed to prev version saving last)
-                        match col {
-                            GenericColumn::Bool(c) => c.push(Some(signal.value.is_nearly(1.0))),
-                            GenericColumn::I8(c) => c.push(Some(signal.value as i8)),
-                            GenericColumn::I32(c) => c.push(Some(signal.value as i32)),
-                            GenericColumn::I64(c) => c.push(Some(signal.value as i64)),
-                            //                            GenericColumn::F16(c) => c.push(Some(f16::from(signal.value))),
-                            GenericColumn::F32(c) => c.push(Some(signal.value as f32)),
-                            GenericColumn::F64(c) => c.push(Some(signal.value)),
-                            _ => {}
+                        if args.en_ipm {
+                            match col {
+                                GenericColumn::Bool(c) => c.push(Some(signal.value.is_nearly(1.0))),
+                                GenericColumn::I8(c) => c.push(Some(signal.value as i8)),
+                                GenericColumn::I32(c) => c.push(Some(signal.value as i32)),
+                                GenericColumn::I64(c) => c.push(Some(signal.value as i64)),
+                                //                            GenericColumn::F16(c) => c.push(Some(f16::from(signal.value))),
+                                GenericColumn::F32(c) => c.push(Some(signal.value as f32)),
+                                GenericColumn::F64(c) => c.push(Some(signal.value)),
+                                _ => {}
+                            }
+                            is_filled[schema.index_of(signal.name).unwrap()] = true;
                         }
-                        is_filled[schema.index_of(signal.name).unwrap()] = true;
+
+                        if args.aux_outputs.iter().any(|s| s == &signal.name) {
+                            let _ = tx.try_send((signal.name.to_string(), signal.value));
+                        }
                     }
                 }
             }
@@ -241,28 +258,26 @@ fn data_loop(args: &args::Args, dbc_content: &String) {
         if relative_time_rcv > (&args.cache_ms * f64::from(num_chunks))
             || exit.load(Ordering::SeqCst)
         {
-            let col = &mut columns[schema.index_of("Time_ms").unwrap()];
-            is_filled[schema.index_of("Time_ms").unwrap()] = true;
-            match col {
-                GenericColumn::F64(c) => c.push(Some(relative_time_rcv)),
-                _ => {}
-            }
-            let mut empty_cols = 0;
-            for (index, value) in is_filled.iter().enumerate() {
-                if !value {
-                    columns[index].push_null();
-                    empty_cols += 1;
+            if args.en_ipm {
+                let col = &mut columns[schema.index_of("Time_ms").unwrap()];
+                is_filled[schema.index_of("Time_ms").unwrap()] = true;
+                match col {
+                    GenericColumn::F64(c) => c.push(Some(relative_time_rcv)),
+                    _ => {}
                 }
+
+                num_chunks += 1;
+                is_filled.fill(false);
             }
-            num_chunks += 1;
-            is_filled.fill(false);
             if num_chunks % 250 == 0 {
-                print!("\rRow #{} with {} empty fields", num_chunks, empty_cols);
+                print!("\rRow #{}", num_chunks);
                 io::stdout().flush().unwrap();
             }
         }
     }
     println!("");
-    let batch = store::finish_record_batch(columns, schema);
-    store::write_record_batch_to_parquet(&batch, &args.output).unwrap();
+    if args.en_ipm {
+        let batch = store::finish_record_batch(columns, schema);
+        store::write_record_batch_to_parquet(&batch, &args.output).unwrap();
+    }
 }

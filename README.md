@@ -7,6 +7,8 @@ Example:
 ```
 You can also use `--stdin` or  `--socket` instead of `--candump`.
 
+If you don't pass `--output`, cantelope won't store values. This is useful for using the live plotting function. Memory usage should be near zero under this circumstance.
+
 There's single letter versions of the arguments, but I don't remember them. Check `src/args.rs`. It's quite readable.
 
 `--stdin` and `--candump` expect line seperated frames in the following format `(time in seconds) interface id_in_hex#data_in_hex` Ex:
