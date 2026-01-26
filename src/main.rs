@@ -125,7 +125,7 @@ fn main() {
     let schema = Arc::new(Schema::new(fields));
     // ------
 
-    let mut parser = CanDumpParser::new("/dev/null").unwrap();
+    let mut parser = CanDumpParser::new(&String::default()).unwrap();
 
     #[cfg(feature = "socket")]
     let mut cansocket: Option<socketwrap::CanWrapper> = None;
