@@ -30,8 +30,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 // Allows data loop to send decoded values back to main thread
 use std::sync::mpsc;
-type DataPoint = (String, f64);
 use std::sync::mpsc::SyncSender;
+
+pub mod plot;
+use plot::DataPoint;
+
+#[cfg(feature = "plot")]
+use plot::PlotWindow;
 
 // Used for type decisions only
 trait FloatExt {
@@ -53,16 +58,18 @@ fn main() {
 
     let (tx, rx) = mpsc::sync_channel::<DataPoint>(100); // For transfers from the data loop thread to main
 
+    let args_en_aux = args.en_aux;
+
     let handle = std::thread::spawn(move || {
         data_loop(&args, &dbc_content, tx);
     });
 
-    for (key, value) in rx {
-        println!("Received from thread: {} => {}", key, value);
-
-        // This is where iced-plotters will eventually
-        // update the graph state.
+    #[cfg(feature = "plot")]
+    if (args_en_aux) {
+        PlotWindow::run(rx);
     }
+
+    handle.join();
 }
 
 fn data_loop(args: &args::Args, dbc_content: &String, tx: SyncSender<DataPoint>) {
@@ -247,7 +254,11 @@ fn data_loop(args: &args::Args, dbc_content: &String, tx: SyncSender<DataPoint>)
                         }
 
                         if args.aux_outputs.iter().any(|s| s == &signal.name) {
-                            let _ = tx.try_send((signal.name.to_string(), signal.value));
+                            let _ = tx.try_send((
+                                signal.name.to_string(),
+                                relative_time_rcv,
+                                signal.value,
+                            ));
                         }
                     }
                 }
@@ -265,8 +276,14 @@ fn data_loop(args: &args::Args, dbc_content: &String, tx: SyncSender<DataPoint>)
                     GenericColumn::F64(c) => c.push(Some(relative_time_rcv)),
                     _ => {}
                 }
-
                 num_chunks += 1;
+
+                for (index, value) in is_filled.iter().enumerate() {
+                    if !value {
+                        columns[index].push_null();
+                    }
+                }
+
                 is_filled.fill(false);
             }
             if num_chunks % 250 == 0 {

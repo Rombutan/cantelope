@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
+default = ["plot"]
 socket = ["dep:socketcan"]
+plot = ["dep:plotters-iced", "dep:plotters", "dep:iced"]
 
 [dependencies]
 socketcan = { version = '3.5.0', optional = true }
@@ -14,3 +16,8 @@ dbc-rs = { git = "https://github.com/Rombutan/dbc-rs.git" }
 candump = { git = "https://github.com/Rombutan/candump-rs.git" }
 arrow = { version = "57.2.0", default-features = false }
 parquet = { version = "57.2.0", default-features = false, features = ["arrow", "snap"] }
+
+# stuff for gui
+iced = { version = "0.10", features = ["canvas", "tokio"], optional = true}
+plotters = {version = "0.3", optional = true}
+plotters-iced = {version = "0.9", optional = true}

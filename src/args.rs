@@ -19,12 +19,14 @@ pub struct Args {
     pub aux_ms: f64,
     pub aux_num: u32,
     pub en_ipm: bool,
+    pub en_aux: bool,
 }
 
 pub fn process_args() -> Args {
     let mut argsi = env::args().skip(1); // skip program name
     let mut args = Args::default();
     args.en_ipm = false;
+    args.en_aux = false;
     while let Some(arg) = argsi.next() {
         match arg.as_str() {
             "--dbc" | "-d" => {
@@ -80,6 +82,7 @@ pub fn process_args() -> Args {
                         .parse()
                         .unwrap(),
                 );
+                args.en_aux = true;
             }
 
             _ => {
