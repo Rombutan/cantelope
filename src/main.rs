@@ -37,7 +37,6 @@ use plot::DataPoint;
 
 #[cfg(feature = "plot")]
 use plot::PlotWindow;
-
 // Used for type decisions only
 trait FloatExt {
     fn is_nearly(&self, target: f64) -> bool;

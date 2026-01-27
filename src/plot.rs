@@ -1,13 +1,14 @@
 use iced::Font;
 use iced::time;
-use iced::{Application, Command, Element, Length, Settings, Subscription, Theme};
+use iced::{Application, Element, Length, Settings, Subscription, Theme};
 use plotters::prelude::*;
-use plotters_iced::{Chart, ChartBuilder, ChartWidget};
+use plotters_iced2::{Chart, ChartBuilder, ChartWidget};
 use std::{
     collections::{HashMap, VecDeque},
-    sync::mpsc::Receiver,
+    sync::{Arc, Mutex, mpsc::Receiver},
     time::{Duration, Instant},
 };
+
 const MY_FONT: Font = Font::with_name("Arial"); // Example
 pub type DataPoint = (String, f64, f64); // (signal, x, y)
 
@@ -15,7 +16,7 @@ const X_WINDOW: f64 = 30000.0;
 const FPS_LIMIT: u64 = 25;
 
 pub struct PlotWindow {
-    receiver: Receiver<DataPoint>,
+    receiver: Arc<Mutex<Receiver<DataPoint>>>,
     signals: HashMap<String, VecDeque<(f64, f64)>>,
     last_redraw: Instant,
 }
@@ -36,73 +37,61 @@ impl Default for Flags {
 }
 
 impl PlotWindow {
+    // pub fn run(receiver: Receiver<DataPoint>) -> iced::Result {
+    //     <PlotWindow as iced::Application>::run(Settings {
+    //         flags: Flags { receiver },
+    //         antialiasing: true,
+    //         window: iced::window::Settings::default(),
+    //         id: None,
+    //         default_font: MY_FONT,
+    //         default_text_size: 16.0,
+    //         exit_on_close_request: true,
+    //     })
+    // }
+
     pub fn run(receiver: Receiver<DataPoint>) -> iced::Result {
-        <PlotWindow as iced::Application>::run(Settings {
-            flags: Flags { receiver },
-            antialiasing: true,
-            window: iced::window::Settings::default(),
-            id: None,
-            default_font: MY_FONT,
-            default_text_size: 16.0,
-            exit_on_close_request: true,
-        })
-    }
+        let receiver = Arc::new(Mutex::new(receiver));
 
-    fn run_with_settings(settings: Settings<()>, receiver: Receiver<DataPoint>) -> iced::Result {
-        PlotWindow::run(receiver)
-    }
-
-    fn new(receiver: Receiver<DataPoint>) -> (Self, Command<Message>) {
-        (
-            Self {
-                receiver,
-                signals: HashMap::new(),
-                last_redraw: Instant::now(),
+        iced::application(
+            {
+                let receiver = Arc::clone(&receiver);
+                move || PlotWindow {
+                    receiver: Arc::clone(&receiver),
+                    signals: HashMap::new(),
+                    last_redraw: Instant::now(),
+                }
             },
-            Command::none(),
+            PlotWindow::update,
+            PlotWindow::view,
         )
+        .subscription(PlotWindow::subscription)
+        .title("Plots")
+        .centered()
+        .run()
+    }
+
+    fn new(receiver: Arc<Mutex<Receiver<DataPoint>>>) -> Self {
+        Self {
+            receiver: Arc::clone(&receiver),
+            signals: HashMap::new(),
+            last_redraw: Instant::now(),
+        }
     }
 
     fn ingest_points(&mut self) {
-        while let Ok((name, x, y)) = self.receiver.try_recv() {
-            let series = self.signals.entry(name).or_insert_with(VecDeque::new);
-
-            series.push_back((x, y));
-
-            // Drop old X values outside the window
-            while let Some((old_x, _)) = series.front() {
-                if x - *old_x > X_WINDOW {
-                    series.pop_front();
-                } else {
-                    break;
-                }
+        if let Ok(receiver) = self.receiver.lock() {
+            while let Ok((name, x, y)) = receiver.try_recv() {
+                let series = self.signals.entry(name).or_default();
+                series.push_back((x, y));
             }
         }
-    }
-}
-
-impl Application for PlotWindow {
-    type Executor = iced::executor::Default;
-    type Message = Message;
-    type Theme = Theme;
-    type Flags = Flags;
-
-    fn new(flags: Flags) -> (Self, Command<Message>) {
-        (
-            Self {
-                receiver: flags.receiver,
-                signals: HashMap::new(),
-                last_redraw: Instant::now(),
-            },
-            Command::none(),
-        )
     }
 
     fn title(&self) -> String {
         "Live Signal Plot".into()
     }
 
-    fn update(&mut self, message: Message) -> Command<Message> {
+    fn update(&mut self, message: Message) {
         match message {
             Message::Tick => {
                 // FPS cap
@@ -112,11 +101,10 @@ impl Application for PlotWindow {
                 }
             }
         }
-        Command::none()
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        time::every(Duration::from_millis(10)).map(|_| Message::Tick)
+        time::every(std::time::Duration::from_millis(40)).map(|_| Message::Tick) // 25 FPS
     }
 
     fn view(&self) -> Element<Message> {
@@ -129,6 +117,16 @@ impl Application for PlotWindow {
         chart.into()
     }
 }
+
+// impl Default for PlotWindow {
+//     fn default() -> Self {
+//         Self {
+//             receiver: None,
+//             signals: HashMap::new(),
+//             last_redraw: Instant::now(),
+//         }
+//     }
+// }
 
 struct SignalChart<'a> {
     signals: &'a HashMap<String, VecDeque<(f64, f64)>>,
