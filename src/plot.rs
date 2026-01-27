@@ -1,5 +1,5 @@
 use iced::time;
-use iced::{Element, Length, Subscription};
+use iced::{Element, Length, Subscription, widget::Column};
 use plotters::prelude::*;
 use plotters_iced2::{Chart, ChartBuilder, ChartWidget};
 use std::{
@@ -96,13 +96,29 @@ impl PlotWindow {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let chart = ChartWidget::new(SignalChart {
-            signals: &self.signals,
-        })
-        .width(Length::Fill)
-        .height(Length::Fill);
+        // 1. Map over the outer Vec to create a list of widgets
+        let charts: Vec<Element<Message>> = self
+            .plots
+            .iter()
+            .map(|plot_group| {
+                ChartWidget::new(SignalChart {
+                    signals: &self.signals,
+                    // Pass the inner Vec<String> to the toplot field
+                    toplot: plot_group.clone(),
+                })
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into() // Convert each ChartWidget into a generic Element
+            })
+            .collect();
 
-        chart.into()
+        // 2. Place all charts into a Column for a vertical layout
+        let content = Column::with_children(charts)
+            .spacing(10) // Optional: adds a gap between your charts
+            .width(Length::Fill)
+            .height(Length::Fill);
+
+        content.into()
     }
 }
 
@@ -118,6 +134,7 @@ impl PlotWindow {
 
 struct SignalChart<'a> {
     signals: &'a HashMap<String, VecDeque<(f64, f64)>>,
+    toplot: Vec<String>,
 }
 
 impl<'a> Chart<Message> for SignalChart<'a> {
@@ -165,13 +182,15 @@ impl<'a> Chart<Message> for SignalChart<'a> {
         chart.configure_mesh().draw().unwrap();
 
         for (idx, (name, series)) in self.signals.iter().enumerate() {
-            let color = Palette99::pick(idx);
+            if self.toplot.contains(name) {
+                let color = Palette99::pick(idx);
 
-            chart
-                .draw_series(LineSeries::new(series.iter().copied(), &color))
-                .unwrap()
-                .label(name)
-                .legend(move |(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &color));
+                chart
+                    .draw_series(LineSeries::new(series.iter().copied(), &color))
+                    .unwrap()
+                    .label(name)
+                    .legend(move |(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &color));
+            }
         }
 
         chart
