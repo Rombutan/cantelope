@@ -10,7 +10,7 @@ use std::{
 
 pub type DataPoint = (String, f64, f64); // (signal, x, y)
 
-const X_WINDOW: f64 = 30000.0;
+const X_WINDOW: f64 = 3000.0;
 const FPS_LIMIT: u64 = 25;
 
 pub struct PlotWindow {
@@ -74,7 +74,23 @@ impl PlotWindow {
         if let Ok(receiver) = self.receiver.lock() {
             while let Ok((name, x, y)) = receiver.try_recv() {
                 let series = self.signals.entry(name).or_default();
+
+                // 1. Add the new point
                 series.push_back((x, y));
+
+                // 2. The Delta-X Limit
+                // Get the newest X value we just pushed
+                let latest_x = x;
+
+                // 3. Remove points from the front while they are outside the 3000-unit window
+                while let Some(&(oldest_x, _)) = series.front() {
+                    if latest_x - oldest_x > 10000.0 {
+                        series.pop_front();
+                    } else {
+                        // The oldest point is now within the window, so stop popping
+                        break;
+                    }
+                }
             }
         }
     }
@@ -148,19 +164,27 @@ impl<'a> Chart<Message> for SignalChart<'a> {
         let mut max_y = 0.01;
         let mut min_y = -0.01;
 
+        for name in &self.toplot {
+            if let Some(series) = self.signals.get(name) {
+                for &(_x, y) in series {
+                    if max_y < y {
+                        max_y = y;
+                    }
+                    if min_y > y {
+                        min_y = y;
+                    }
+                }
+            }
+        }
+
         for series in self.signals.values() {
-            for &(x, y) in series {
+            for &(x, _y) in series {
                 if min_x > x {
                     min_x = x;
                 }
+
                 if max_x < x {
                     max_x = x;
-                }
-                if max_y < y {
-                    max_y = y;
-                }
-                if min_y > y {
-                    min_y = y;
                 }
             }
         }
@@ -195,7 +219,9 @@ impl<'a> Chart<Message> for SignalChart<'a> {
 
         chart
             .configure_series_labels()
-            .border_style(&BLACK)
+            .position(SeriesLabelPosition::UpperLeft) // This moves it to the top left
+            .background_style(&TRANSPARENT)
+            .border_style(&TRANSPARENT)
             .draw()
             .unwrap();
     }
