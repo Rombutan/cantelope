@@ -21,3 +21,6 @@ parquet = { version = "57.2.0", default-features = false, features = ["arrow", "
 iced = { version = "0.10", features = ["canvas", "tokio"], optional = true}
 plotters = {version = "0.3", optional = true}
 plotters-iced = {version = "0.9", optional = true}
+
+[profile.release]
+opt-level = 3

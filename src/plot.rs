@@ -11,7 +11,7 @@ use std::{
 const MY_FONT: Font = Font::with_name("Arial"); // Example
 pub type DataPoint = (String, f64, f64); // (signal, x, y)
 
-const X_WINDOW: f64 = 5000.0;
+const X_WINDOW: f64 = 30000.0;
 const FPS_LIMIT: u64 = 25;
 
 pub struct PlotWindow {
@@ -140,7 +140,8 @@ impl<'a> Chart<Message> for SignalChart<'a> {
     fn build_chart<DB: DrawingBackend>(&self, state: &Self::State, mut builder: ChartBuilder<DB>) {
         let mut min_x = f64::INFINITY;
         let mut max_x = f64::NEG_INFINITY;
-        let mut max_y = 1.0;
+        let mut max_y = 0.01;
+        let mut min_y = -0.01;
 
         for series in self.signals.values() {
             for &(x, y) in series {
@@ -153,6 +154,9 @@ impl<'a> Chart<Message> for SignalChart<'a> {
                 if max_y < y {
                     max_y = y;
                 }
+                if min_y > y {
+                    min_y = y;
+                }
             }
         }
 
@@ -163,8 +167,8 @@ impl<'a> Chart<Message> for SignalChart<'a> {
 
         let chart = builder
             .margin(10)
-            .x_label_area_size(30)
-            .y_label_area_size(40);
+            .x_label_area_size(40)
+            .y_label_area_size(60);
 
         let mut chart = chart
             .build_cartesian_2d(min_x..max_x, -max_y..max_y)
