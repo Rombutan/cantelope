@@ -1,6 +1,5 @@
-use iced::Font;
 use iced::time;
-use iced::{Application, Element, Length, Settings, Subscription, Theme};
+use iced::{Element, Length, Subscription};
 use plotters::prelude::*;
 use plotters_iced2::{Chart, ChartBuilder, ChartWidget};
 use std::{
@@ -9,7 +8,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-const MY_FONT: Font = Font::with_name("Arial"); // Example
 pub type DataPoint = (String, f64, f64); // (signal, x, y)
 
 const X_WINDOW: f64 = 30000.0;
@@ -19,6 +17,7 @@ pub struct PlotWindow {
     receiver: Arc<Mutex<Receiver<DataPoint>>>,
     signals: HashMap<String, VecDeque<(f64, f64)>>,
     last_redraw: Instant,
+    plots: Vec<Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -49,7 +48,7 @@ impl PlotWindow {
     //     })
     // }
 
-    pub fn run(receiver: Receiver<DataPoint>) -> iced::Result {
+    pub fn run(receiver: Receiver<DataPoint>, _plots: Vec<Vec<String>>) -> iced::Result {
         let receiver = Arc::new(Mutex::new(receiver));
 
         iced::application(
@@ -59,6 +58,7 @@ impl PlotWindow {
                     receiver: Arc::clone(&receiver),
                     signals: HashMap::new(),
                     last_redraw: Instant::now(),
+                    plots: _plots.clone(), // ... Why? WHy? WHY? WHY DOES EVERYTHING NEED TO BE CLONE??? FUCK YOU RUST
                 }
             },
             PlotWindow::update,
@@ -70,14 +70,6 @@ impl PlotWindow {
         .run()
     }
 
-    fn new(receiver: Arc<Mutex<Receiver<DataPoint>>>) -> Self {
-        Self {
-            receiver: Arc::clone(&receiver),
-            signals: HashMap::new(),
-            last_redraw: Instant::now(),
-        }
-    }
-
     fn ingest_points(&mut self) {
         if let Ok(receiver) = self.receiver.lock() {
             while let Ok((name, x, y)) = receiver.try_recv() {
@@ -85,10 +77,6 @@ impl PlotWindow {
                 series.push_back((x, y));
             }
         }
-    }
-
-    fn title(&self) -> String {
-        "Live Signal Plot".into()
     }
 
     fn update(&mut self, message: Message) {
@@ -107,7 +95,7 @@ impl PlotWindow {
         time::every(std::time::Duration::from_millis(40)).map(|_| Message::Tick) // 25 FPS
     }
 
-    fn view(&self) -> Element<Message> {
+    fn view(&self) -> Element<'_, Message> {
         let chart = ChartWidget::new(SignalChart {
             signals: &self.signals,
         })
@@ -136,6 +124,8 @@ impl<'a> Chart<Message> for SignalChart<'a> {
     type State = ();
 
     fn build_chart<DB: DrawingBackend>(&self, state: &Self::State, mut builder: ChartBuilder<DB>) {
+        _ = state;
+
         let mut min_x = f64::INFINITY;
         let mut max_x = f64::NEG_INFINITY;
         let mut max_y = 0.01;

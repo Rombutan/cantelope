@@ -16,8 +16,7 @@ pub struct Args {
     pub candatainput: CanDataInput,
     pub cache_ms: f64,
     pub aux_outputs: Vec<String>,
-    pub aux_ms: f64,
-    pub aux_num: u32,
+    pub plots: Vec<Vec<String>>,
     pub en_ipm: bool,
     pub en_aux: bool,
 }
@@ -75,13 +74,12 @@ pub fn process_args() -> Args {
             }
 
             "--plot" | "-p" => {
-                args.aux_outputs.push(
-                    argsi
-                        .next()
-                        .expect("--aux requires a value")
-                        .parse()
-                        .unwrap(),
-                );
+                // Make both args.aux_outputs which contains unstructured outputs and args.plots which is structured by plot
+                // It's fine if things in args.aux_outputs are duplicated, all it will do is waste a few bytes of memory :()
+                let raw_val = argsi.next().expect("--plot requires a value");
+                let list: Vec<String> = raw_val.split(',').map(|s| s.to_string()).collect();
+                args.aux_outputs.extend(list.clone());
+                args.plots.push(list);
                 args.en_aux = true;
             }
 
@@ -90,17 +88,6 @@ pub fn process_args() -> Args {
             }
         }
     }
-
-    if (args.aux_ms != f64::default()) ^ (args.aux_outputs.len() > 0) {
-        // If Aux timing has been set XOR aux outputs have been added
-        eprintln!("Auxiliary outputs and time range MUST be set together");
-    }
-
-    if (args.aux_ms * 5.0) < args.cache_ms {
-        eprintln!("Dont set auxiliary time range to less than 5 times the cache timing");
-    }
-
-    args.aux_num = (args.aux_ms / args.cache_ms) as u32;
 
     return args;
 }

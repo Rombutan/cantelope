@@ -58,17 +58,18 @@ fn main() {
     let (tx, rx) = mpsc::sync_channel::<DataPoint>(100); // For transfers from the data loop thread to main
 
     let args_en_aux = args.en_aux;
+    let args_plots = args.plots.clone(); // WHYYY
 
     let handle = std::thread::spawn(move || {
         data_loop(&args, &dbc_content, tx);
     });
 
     #[cfg(feature = "plot")]
-    if (args_en_aux) {
-        PlotWindow::run(rx);
+    if args_en_aux {
+        _ = PlotWindow::run(rx, args_plots);
     }
 
-    handle.join();
+    _ = handle.join();
 }
 
 fn data_loop(args: &args::Args, dbc_content: &String, tx: SyncSender<DataPoint>) {
