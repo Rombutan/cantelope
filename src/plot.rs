@@ -161,8 +161,8 @@ impl<'a> Chart<Message> for SignalChart<'a> {
 
         let mut min_x = f64::INFINITY;
         let mut max_x = f64::NEG_INFINITY;
-        let mut max_y = 0.01;
-        let mut min_y = -0.01;
+        let mut max_y = -100000.0;
+        let mut min_y = 100000.0;
 
         for name in &self.toplot {
             if let Some(series) = self.signals.get(name) {
@@ -200,7 +200,7 @@ impl<'a> Chart<Message> for SignalChart<'a> {
             .y_label_area_size(60);
 
         let mut chart = chart
-            .build_cartesian_2d(min_x..max_x, min_y..max_y)
+            .build_cartesian_2d(min_x..max_x, min_y - 0.01..max_y + 0.01)
             .unwrap();
 
         chart.configure_mesh().draw().unwrap();
