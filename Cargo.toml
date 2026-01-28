@@ -16,6 +16,8 @@ dbc-rs = { git = "https://github.com/Rombutan/dbc-rs.git" }
 candump = { git = "https://github.com/Rombutan/candump-rs.git" }
 arrow = { version = "57.2.0", default-features = false }
 parquet = { version = "57.2.0", default-features = false, features = ["arrow", "snap"] }
+tokio = { version = "1", features = ["full"] }
+bytemuck = { version = "1.14", features = ["derive"] }
 
 # stuff for gui
 iced = { version = "0.14", features = ["canvas", "tokio"], optional = true}
@@ -24,3 +26,15 @@ plotters-iced2 = {version = "0.14", optional = true}
 
 [profile.release]
 opt-level = 3
+
+[[bin]]
+name = "cantelope"
+path = "src/main.rs"
+
+[[bin]]
+name = "sender"
+path = "src/sender.rs"
+
+[[bin]]
+name = "relay"
+path = "src/relay.rs"

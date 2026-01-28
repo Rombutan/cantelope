@@ -200,7 +200,7 @@ impl<'a> Chart<Message> for SignalChart<'a> {
             .y_label_area_size(60);
 
         let mut chart = chart
-            .build_cartesian_2d(min_x..max_x, -max_y..max_y)
+            .build_cartesian_2d(min_x..max_x, min_y..max_y)
             .unwrap();
 
         chart.configure_mesh().draw().unwrap();
@@ -208,12 +208,14 @@ impl<'a> Chart<Message> for SignalChart<'a> {
         for (idx, (name, series)) in self.signals.iter().enumerate() {
             if self.toplot.contains(name) {
                 let color = Palette99::pick(idx);
+                // Create a style with a specific stroke width (e.g., 3 pixels)
+                let style = color.stroke_width(3);
 
                 chart
-                    .draw_series(LineSeries::new(series.iter().copied(), &color))
+                    .draw_series(LineSeries::new(series.iter().copied(), style))
                     .unwrap()
                     .label(name)
-                    .legend(move |(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &color));
+                    .legend(move |(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], style));
             }
         }
 

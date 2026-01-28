@@ -200,6 +200,7 @@ fn data_loop(args: &args::Args, dbc_content: &String, tx: SyncSender<DataPoint>)
         let timestamp;
         let id;
         let data;
+
         match &args.candatainput {
             CanDataInput::File => {
                 exit.store(parser.parse(), Ordering::SeqCst);
