@@ -19,6 +19,9 @@ pub mod args;
 // Custom Candump parsing
 use candump::CanDumpParser;
 
+// Custom TCP Can interface
+pub mod tcpwrapper;
+
 use crate::args::CanDataInput;
 
 // SocketCAN
@@ -157,8 +160,10 @@ fn data_loop(args: &args::Args, dbc_content: &String, tx: SyncSender<DataPoint>)
 
     #[cfg(feature = "socket")]
     let mut cansocket: Option<socketwrap::CanWrapper> = None;
-    let stdin = io::stdin();
 
+    let mut tcpsocket: Option<tcpwrapper::TcpWrapper> = None;
+
+    let stdin = io::stdin();
     let time_start;
 
     match &args.candatainput {
@@ -182,6 +187,11 @@ fn data_loop(args: &args::Args, dbc_content: &String, tx: SyncSender<DataPoint>)
         #[cfg(not(feature = "socket"))]
         CanDataInput::Socket => {
             panic!("Socketcan not enabled in this build")
+        }
+        CanDataInput::Remote => {
+            tcpsocket = Some(tcpwrapper::TcpWrapper::new(&args.input));
+            tcpsocket.as_mut().unwrap().parse().unwrap();
+            time_start = tcpsocket.as_mut().unwrap().get_timestamp();
         }
     }
 
@@ -228,6 +238,12 @@ fn data_loop(args: &args::Args, dbc_content: &String, tx: SyncSender<DataPoint>)
             #[cfg(not(feature = "socket"))]
             CanDataInput::Socket => {
                 panic!("Socketcan not yet supported")
+            }
+            CanDataInput::Remote => {
+                tcpsocket.as_mut().unwrap().parse().unwrap();
+                timestamp = tcpsocket.as_mut().unwrap().get_timestamp();
+                id = tcpsocket.as_mut().unwrap().get_id();
+                data = tcpsocket.as_mut().unwrap().get_data();
             }
         }
         //if exit {continue;} // Prevents continued execution resulting in duplicated values when file is over, breaks finishing of last row

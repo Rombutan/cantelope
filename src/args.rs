@@ -6,6 +6,7 @@ pub enum CanDataInput {
     File,
     Socket,
     Stdin,
+    Remote,
 }
 
 #[derive(Default)]
@@ -54,6 +55,10 @@ pub fn process_args() -> Args {
 
             "--stdin" | "-t" => {
                 args.candatainput = CanDataInput::Stdin;
+            }
+
+            "--remote" | "-r" => {
+                args.candatainput = CanDataInput::Remote;
             }
 
             "--cache-ms" | "-c" => {

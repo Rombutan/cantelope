@@ -18,6 +18,7 @@ arrow = { version = "57.2.0", default-features = false }
 parquet = { version = "57.2.0", default-features = false, features = ["arrow", "snap"] }
 tokio = { version = "1", features = ["full"] }
 bytemuck = { version = "1.14", features = ["derive"] }
+crossbeam-channel = "0.5"
 
 # stuff for gui
 iced = { version = "0.14", features = ["canvas", "tokio"], optional = true}

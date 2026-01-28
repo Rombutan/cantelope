@@ -17,6 +17,14 @@ There's single letter versions of the arguments, but I don't remember them. Chec
 ```
 You can produce these with `candump -ta -n 0 can0` for stdout output or `candump -L` for log file output.
 
+## Remote mode
+You can add `--remote` and specify `ip:port` as your input `-i` argument, to connect to a TCP server.
+
+Conveniently available is the sender binary which retransmits packets in the appropriate format. Ex:
+```
+./sender vcan0 2129"
+```
+
 ## Build notes
 - If you're on linux, build with `--features socket` so you can use SocketCan interfaces.
 - If you wanna cross compile for windows, google it.

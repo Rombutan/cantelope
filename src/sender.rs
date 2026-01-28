@@ -37,16 +37,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut cansocket = socketwrap::CanWrapper::new(&can_interface).unwrap();
         println!("Polling CAN: {}", can_interface);
 
-        let _ = cansocket.parse();
-
         loop {
+            // 1. BLOCK and wait for a new frame from the hardware
+            if let Err(e) = cansocket.parse() {
+                eprintln!("CAN parse error: {}", e);
+                continue;
+            }
+
+            // 2. NOW create the frame with the fresh data
             let frame = CanFrame {
                 timestamp: cansocket.get_timestamp(),
                 id: cansocket.get_id(),
-                _pad: 0, // Explicitly zero out the padding
+                _pad: 0,
                 data: cansocket.get_data(),
             };
 
+            // 3. Broadcast the unique frame
             if tx_can.receiver_count() > 0 {
                 let _ = tx_can.send(frame);
             }
@@ -60,6 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         let (mut socket, addr) = listener.accept().await?;
         println!("Client connected: {}", addr);
+        socket.set_nodelay(true).unwrap();
 
         let mut rx = tx.subscribe();
 
