@@ -35,11 +35,18 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::mpsc::SyncSender;
 
+#[cfg(feature = "plot")]
 pub mod plot;
+
+#[cfg(feature = "plot")]
 use plot::DataPoint;
 
 #[cfg(feature = "plot")]
 use plot::PlotWindow;
+
+#[cfg(not(feature = "plot"))]
+pub type DataPoint = (String, f64, f64); // (signal, x, y)
+
 // Used for type decisions only
 trait FloatExt {
     fn is_nearly(&self, target: f64) -> bool;

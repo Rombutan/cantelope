@@ -21,7 +21,7 @@ struct CanFrame {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     if args.len() != 3 {
-        eprintln!("Usage: {} <can_interface> <local_listen_port>", args[0]);
+        eprintln!("Usage: {} <can_interface> <local_listen_port>", args[0]); // 1534
         return Ok(());
     }
 

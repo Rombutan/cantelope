@@ -35,6 +35,7 @@ path = "src/main.rs"
 [[bin]]
 name = "sender"
 path = "src/sender.rs"
+required-features = ["socket"]
 
 [[bin]]
 name = "relay"

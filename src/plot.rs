@@ -1,4 +1,5 @@
 use iced::time;
+
 use iced::{Element, Length, Subscription, widget::Column};
 use plotters::prelude::*;
 use plotters_iced2::{Chart, ChartBuilder, ChartWidget};
@@ -11,7 +12,6 @@ use std::{
 pub type DataPoint = (String, f64, f64); // (signal, x, y)
 
 const X_WINDOW: f64 = 3000.0;
-const FPS_LIMIT: u64 = 25;
 
 pub struct PlotWindow {
     receiver: Arc<Mutex<Receiver<DataPoint>>>,
@@ -98,17 +98,14 @@ impl PlotWindow {
     fn update(&mut self, message: Message) {
         match message {
             Message::Tick => {
-                // FPS cap
-                if self.last_redraw.elapsed() >= Duration::from_millis(1000 / FPS_LIMIT) {
-                    self.ingest_points();
-                    self.last_redraw = Instant::now();
-                }
+                self.ingest_points();
+                self.last_redraw = Instant::now();
             }
         }
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        time::every(std::time::Duration::from_millis(40)).map(|_| Message::Tick) // 25 FPS
+        time::every(std::time::Duration::from_millis(10)).map(|_| Message::Tick) // 100 FPS
     }
 
     fn view(&self) -> Element<'_, Message> {
