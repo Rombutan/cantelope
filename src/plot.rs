@@ -1,8 +1,6 @@
-use iced::system::theme;
 use iced::time;
-
 use iced::{
-    Element, Length, Subscription, theme::Base, widget::Button, widget::Column, widget::Row,
+    Element, Length, Subscription, keyboard, widget::Button, widget::Column, widget::Row,
     widget::Text, widget::text_input,
 };
 use plotters::prelude::*;
@@ -44,6 +42,7 @@ pub enum Message {
     Pause,
     TimeRange(String),
     ThemeChanged(iced::theme::Mode),
+    Nothing,
 }
 
 pub struct Flags {
@@ -144,11 +143,24 @@ impl PlotWindow {
             Message::ThemeChanged(mode) => {
                 self.theme_mode = mode;
             }
+            Message::Nothing => {}
         }
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        time::every(std::time::Duration::from_millis(10)).map(|_| Message::Tick) // 100 FPS
+        // 1. Your existing timer
+        let timer = time::every(std::time::Duration::from_millis(10)).map(|_| Message::Tick);
+
+        // 2. The keyboard listener
+        let keyboard = keyboard::listen().map(|event| match event {
+            keyboard::Event::KeyPressed {
+                key: keyboard::Key::Named(keyboard::key::Named::Space),
+                ..
+            } => Message::Pause,
+            _ => Message::Nothing,
+        });
+
+        Subscription::batch(vec![timer, keyboard])
     }
 
     fn view(&self) -> Element<'_, Message> {

@@ -24,6 +24,7 @@ crossbeam-channel = "0.5"
 iced = { version = "0.14", features = ["canvas", "tokio"], optional = true}
 plotters = {version = "0.3", optional = true}
 plotters-iced2 = {version = "0.14", optional = true}
+smol_str = "0.3.6"
 
 [profile.release]
 opt-level = 3
