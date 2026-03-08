@@ -24,7 +24,7 @@ impl TcpWrapper {
     /// Connects to the TCP Relay server
     pub fn new(addr: &str) -> Self {
         let stream = TcpStream::connect(addr).expect("Failed to connect to CAN relay server");
-
+        stream.set_nodelay(true).expect("set_nodelay call failed");
         Self {
             stream,
             timestamp: 0.0,

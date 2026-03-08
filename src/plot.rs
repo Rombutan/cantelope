@@ -1,28 +1,49 @@
+use iced::system::theme;
 use iced::time;
 
-use iced::{Element, Length, Subscription, widget::Column};
+use iced::{
+    Element, Length, Subscription, theme::Base, widget::Button, widget::Column, widget::Row,
+    widget::Text, widget::text_input,
+};
 use plotters::prelude::*;
+use plotters::style::Color;
 use plotters_iced2::{Chart, ChartBuilder, ChartWidget};
+use std::collections::hash_map::DefaultHasher;
+use std::f64;
+use std::hash::{Hash, Hasher};
 use std::{
     collections::{HashMap, VecDeque},
     sync::{Arc, Mutex, mpsc::Receiver},
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 pub type DataPoint = (String, f64, f64); // (signal, x, y)
 
-const X_WINDOW: f64 = 3000.0;
+fn int_from_str(name: &str) -> usize {
+    let mut hasher = DefaultHasher::new();
+    name.hash(&mut hasher);
+    let hash = hasher.finish();
 
+    // Use modulo to pick an index safely
+    hash as usize
+}
 pub struct PlotWindow {
     receiver: Arc<Mutex<Receiver<DataPoint>>>,
     signals: HashMap<String, VecDeque<(f64, f64)>>,
     last_redraw: Instant,
     plots: Vec<Vec<String>>,
+    play: bool,
+    time_range_text: String,
+    x_window: f64,
+    theme_mode: iced::theme::Mode,
 }
 
 #[derive(Debug, Clone)]
 pub enum Message {
     Tick,
+    Pause,
+    TimeRange(String),
+    ThemeChanged(iced::theme::Mode),
 }
 
 pub struct Flags {
@@ -50,15 +71,23 @@ impl PlotWindow {
 
     pub fn run(receiver: Receiver<DataPoint>, _plots: Vec<Vec<String>>) -> iced::Result {
         let receiver = Arc::new(Mutex::new(receiver));
-
         iced::application(
             {
                 let receiver = Arc::clone(&receiver);
-                move || PlotWindow {
-                    receiver: Arc::clone(&receiver),
-                    signals: HashMap::new(),
-                    last_redraw: Instant::now(),
-                    plots: _plots.clone(), // ... Why? WHy? WHY? WHY DOES EVERYTHING NEED TO BE CLONE??? FUCK YOU RUST
+                move || {
+                    (
+                        PlotWindow {
+                            receiver: Arc::clone(&receiver),
+                            signals: HashMap::new(),
+                            last_redraw: Instant::now(),
+                            plots: _plots.clone(), // ... Why? WHy? WHY? WHY DOES EVERYTHING NEED TO BE CLONE??? FUCK YOU RUST
+                            play: true,
+                            time_range_text: String::from("3000"),
+                            x_window: 3000.0,
+                            theme_mode: iced::theme::Mode::Light,
+                        },
+                        iced::system::theme().map(Message::ThemeChanged),
+                    )
                 }
             },
             PlotWindow::update,
@@ -84,7 +113,7 @@ impl PlotWindow {
 
                 // 3. Remove points from the front while they are outside the 3000-unit window
                 while let Some(&(oldest_x, _)) = series.front() {
-                    if latest_x - oldest_x > 10000.0 {
+                    if latest_x - oldest_x > self.x_window {
                         series.pop_front();
                     } else {
                         // The oldest point is now within the window, so stop popping
@@ -98,8 +127,22 @@ impl PlotWindow {
     fn update(&mut self, message: Message) {
         match message {
             Message::Tick => {
-                self.ingest_points();
-                self.last_redraw = Instant::now();
+                if self.play {
+                    self.ingest_points();
+                    self.last_redraw = Instant::now();
+                }
+            }
+            Message::Pause => {
+                self.play = !self.play;
+            }
+            Message::TimeRange(value) => {
+                self.time_range_text = value;
+                if let Ok(x_w) = self.time_range_text.parse() {
+                    self.x_window = x_w;
+                }
+            }
+            Message::ThemeChanged(mode) => {
+                self.theme_mode = mode;
             }
         }
     }
@@ -109,7 +152,18 @@ impl PlotWindow {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        // 1. Map over the outer Vec to create a list of widgets
+        let controls = Row::new()
+            .spacing(10)
+            .padding(10)
+            .push(Button::new("Pause").on_press(Message::Pause))
+            .push(Text::new(format!("Time range in ms:")))
+            .push(text_input("3000", &self.time_range_text).on_input(Message::TimeRange));
+
+        let text_color = match self.theme_mode {
+            iced::theme::Mode::Dark => RGBColor(255, 255, 255),
+            _ => RGBColor(0, 0, 0),
+        };
+
         let charts: Vec<Element<Message>> = self
             .plots
             .iter()
@@ -118,6 +172,7 @@ impl PlotWindow {
                     signals: &self.signals,
                     // Pass the inner Vec<String> to the toplot field
                     toplot: plot_group.clone(),
+                    text_color,
                 })
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -125,11 +180,12 @@ impl PlotWindow {
             })
             .collect();
 
-        // 2. Place all charts into a Column for a vertical layout
-        let content = Column::with_children(charts)
-            .spacing(10) // Optional: adds a gap between your charts
+        let content = Column::new()
+            .spacing(5) // Optional: adds a gap between your charts
             .width(Length::Fill)
-            .height(Length::Fill);
+            .height(Length::Fill)
+            .push(controls)
+            .push(Column::with_children(charts).spacing(5));
 
         content.into()
     }
@@ -148,6 +204,7 @@ impl PlotWindow {
 struct SignalChart<'a> {
     signals: &'a HashMap<String, VecDeque<(f64, f64)>>,
     toplot: Vec<String>,
+    pub text_color: RGBColor,
 }
 
 impl<'a> Chart<Message> for SignalChart<'a> {
@@ -188,11 +245,11 @@ impl<'a> Chart<Message> for SignalChart<'a> {
 
         if !min_x.is_finite() {
             min_x = 0.0;
-            max_x = X_WINDOW;
+            max_x = 10.0;
         }
 
         let chart = builder
-            .margin(10)
+            .margin(2)
             .x_label_area_size(40)
             .y_label_area_size(60);
 
@@ -202,11 +259,9 @@ impl<'a> Chart<Message> for SignalChart<'a> {
 
         chart.configure_mesh().draw().unwrap();
 
-        for (idx, (name, series)) in self.signals.iter().enumerate() {
+        for (_idx, (name, series)) in self.signals.iter().enumerate() {
             if self.toplot.contains(name) {
-                let color = Palette99::pick(idx);
-                // Create a style with a specific stroke width (e.g., 3 pixels)
-                let style = color.stroke_width(3);
+                let style = Palette99::pick(int_from_str(name)).stroke_width(3);
 
                 chart
                     .draw_series(LineSeries::new(series.iter().copied(), style))
@@ -216,11 +271,14 @@ impl<'a> Chart<Message> for SignalChart<'a> {
             }
         }
 
+        let text_color = self.text_color;
+
         chart
             .configure_series_labels()
             .position(SeriesLabelPosition::UpperLeft) // This moves it to the top left
             .background_style(&TRANSPARENT)
             .border_style(&TRANSPARENT)
+            .label_font(("sans-serif", 13).into_font().color(&text_color))
             .draw()
             .unwrap();
     }

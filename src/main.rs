@@ -30,6 +30,7 @@ pub mod socketwrap;
 
 // Use ctrl+c as exit signal in stdin and socket mode
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::{process, thread, time};
 
 // Allows data loop to send decoded values back to main thread
 use std::sync::mpsc;
@@ -76,6 +77,7 @@ fn main() {
 
     #[cfg(feature = "plot")]
     if args_en_aux {
+        println!("Starting plotting window!");
         _ = PlotWindow::run(rx, args_plots);
     }
 
@@ -208,6 +210,10 @@ fn data_loop(args: &args::Args, dbc_content: &String, tx: SyncSender<DataPoint>)
     ctrlc::set_handler(move || {
         println!("\nShutdown signal received...");
         ex.store(true, Ordering::SeqCst);
+        thread::sleep(time::Duration::from_millis(200));
+        // Possible hazard with very large data blocks while writting output to
+        // parquet, or when input frequency is very low. these compound as well.
+        process::exit(1);
     })
     .expect("Error setting Ctrl-C handler");
 
@@ -253,7 +259,6 @@ fn data_loop(args: &args::Args, dbc_content: &String, tx: SyncSender<DataPoint>)
                 data = tcpsocket.as_mut().unwrap().get_data();
             }
         }
-        //if exit {continue;} // Prevents continued execution resulting in duplicated values when file is over, breaks finishing of last row
 
         let relative_time_rcv = (timestamp - time_start) * 1000.0; // time since start of recording
 
@@ -320,5 +325,6 @@ fn data_loop(args: &args::Args, dbc_content: &String, tx: SyncSender<DataPoint>)
     if args.en_ipm {
         let batch = store::finish_record_batch(columns, schema);
         store::write_record_batch_to_parquet(&batch, &args.output).unwrap();
+        println!("Finished writting out!");
     }
 }
