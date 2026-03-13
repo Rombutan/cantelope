@@ -77,6 +77,8 @@ enum InputSource {
     File(CanDumpParser),
     #[cfg(feature = "socket")]
     Can(socketwrap::CanWrapper),
+    #[cfg(feature = "peak-can")]
+    Peak(peakwrap::CanWrapper),
     Tcp(tcpwrapper::TcpWrapper),
     Udp(udpwrapper::UdpWrapper),
     Stdin((CanDumpParser, io::Stdin)),
