@@ -1,5 +1,6 @@
 /target
 .cargo/bin/
+.zed
 *.log
 *.parquet
 *.dbc

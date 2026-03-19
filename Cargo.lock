@@ -949,7 +949,7 @@ checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
 [[package]]
 name = "dbc-rs"
 version = "0.4.1"
-source = "git+https://github.com/Rombutan/dbc-rs.git#5ab06e91e65374f37dd65a7d14f97ad728dde03c"
+source = "git+https://github.com/Rombutan/dbc-rs.git#9d56d9886b0927c3dd6384ead5a4422858756eb4"
 
 [[package]]
 name = "dirs"
