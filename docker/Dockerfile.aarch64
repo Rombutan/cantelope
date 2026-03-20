@@ -1,0 +1,14 @@
+# Start from the official cross-rs image for this target
+FROM ghcr.io/cross-rs/aarch64-unknown-linux-gnu:latest
+
+# Switch to root to install packages
+USER root
+
+# 1. Enable arm64 architecture for apt
+# 2. Update and install the SCTP development headers for the target
+RUN dpkg --add-architecture arm64 && \
+    apt-get update && \
+    apt-get install -y libsctp-dev:arm64
+
+# Switch back to the default user if necessary (usually 'rust')
+USER rust

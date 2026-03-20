@@ -1,7 +1,7 @@
 use bytemuck::{Pod, Zeroable};
 use std::io::Read;
-use std::net::TcpStream;
-
+extern crate sctp;
+use sctp::*;
 // This must match the Relay's struct exactly
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -13,7 +13,7 @@ struct CanFrame {
 }
 
 pub struct TcpWrapper {
-    stream: TcpStream,
+    stream: SctpStream,
     // Private variables to hold the "last parsed" state
     timestamp: f64,
     id: u32,
@@ -23,8 +23,8 @@ pub struct TcpWrapper {
 impl TcpWrapper {
     /// Connects to the TCP Relay server
     pub fn new(addr: &str) -> Self {
-        let stream = TcpStream::connect(addr).expect("Failed to connect to CAN relay server");
-        stream.set_nodelay(true).expect("set_nodelay call failed");
+        let stream = SctpStream::connect(addr).expect("Failed to connect to CAN relay server");
+
         Self {
             stream,
             timestamp: 0.0,

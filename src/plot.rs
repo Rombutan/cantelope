@@ -1,7 +1,6 @@
-use iced::time;
 use iced::{
-    Element, Length, Subscription, keyboard, widget::Button, widget::Column, widget::Row,
-    widget::Text, widget::text_input,
+    Background, Element, Length, Subscription, keyboard, time, widget::Button, widget::Column,
+    widget::Row, widget::Text, widget::text_input,
 };
 use plotters::prelude::*;
 use plotters::style::Color;
@@ -14,6 +13,8 @@ use std::{
     sync::{Arc, Mutex, mpsc::Receiver},
     time::Instant,
 };
+
+use iced::widget::{container, text};
 
 pub type DataPoint = (String, f64, f64); // (signal, x, y)
 
@@ -30,6 +31,7 @@ pub struct PlotWindow {
     signals: HashMap<String, VecDeque<(f64, f64)>>,
     last_redraw: Instant,
     plots: Vec<Vec<String>>,
+    regrens: Vec<(String, bool, f64)>,
     play: bool,
     time_range_text: String,
     x_window: f64,
@@ -68,7 +70,11 @@ impl PlotWindow {
     //     })
     // }
 
-    pub fn run(receiver: Receiver<DataPoint>, _plots: Vec<Vec<String>>) -> iced::Result {
+    pub fn run(
+        receiver: Receiver<DataPoint>,
+        _plots: Vec<Vec<String>>,
+        _regrens: Vec<(String, bool, f64)>,
+    ) -> iced::Result {
         let receiver = Arc::new(Mutex::new(receiver));
         iced::application(
             {
@@ -80,6 +86,7 @@ impl PlotWindow {
                             signals: HashMap::new(),
                             last_redraw: Instant::now(),
                             plots: _plots.clone(), // ... Why? WHy? WHY? WHY DOES EVERYTHING NEED TO BE CLONE??? FUCK YOU RUST
+                            regrens: _regrens.clone(),
                             play: true,
                             time_range_text: String::from("3000"),
                             x_window: 3000.0,
@@ -164,6 +171,7 @@ impl PlotWindow {
     }
 
     fn view(&self) -> Element<'_, Message> {
+        use iced::widget::row;
         let controls = Row::new()
             .spacing(10)
             .padding(10)
@@ -176,12 +184,20 @@ impl PlotWindow {
             _ => RGBColor(0, 0, 0),
         };
 
+        let status_row = self
+            .regrens
+            .iter()
+            .fold(row![].spacing(10).padding(10), |row, tuple| {
+                row.push(SignalStatus::new(tuple, &self.signals).view())
+            });
+
         let charts: Vec<Element<Message>> = self
             .plots
             .iter()
             .map(|plot_group| {
                 ChartWidget::new(SignalChart {
                     signals: &self.signals,
+                    time_range: &self.x_window,
                     // Pass the inner Vec<String> to the toplot field
                     toplot: plot_group.clone(),
                     text_color,
@@ -197,6 +213,7 @@ impl PlotWindow {
             .width(Length::Fill)
             .height(Length::Fill)
             .push(controls)
+            .push(status_row)
             .push(Column::with_children(charts).spacing(5));
 
         content.into()
@@ -215,6 +232,7 @@ impl PlotWindow {
 
 struct SignalChart<'a> {
     signals: &'a HashMap<String, VecDeque<(f64, f64)>>,
+    time_range: &'a f64,
     toplot: Vec<String>,
     pub text_color: RGBColor,
 }
@@ -245,13 +263,10 @@ impl<'a> Chart<Message> for SignalChart<'a> {
 
         for series in self.signals.values() {
             for &(x, _y) in series {
-                if min_x > x {
-                    min_x = x;
-                }
-
                 if max_x < x {
                     max_x = x;
                 }
+                min_x = max_x - self.time_range;
             }
         }
 
@@ -293,5 +308,70 @@ impl<'a> Chart<Message> for SignalChart<'a> {
             .label_font(("sans-serif", 13).into_font().color(&text_color))
             .draw()
             .unwrap();
+    }
+}
+
+struct SignalStatus<'a> {
+    // The specific signal name to look up
+    name: &'a str,
+    // true for >, false for <
+    is_greater: bool,
+    threshold: f64,
+    // The shared signal data
+    signals: &'a HashMap<String, VecDeque<(f64, f64)>>,
+}
+
+impl<'a> SignalStatus<'a> {
+    pub fn new(
+        tuple: &'a (String, bool, f64),
+        signals: &'a HashMap<String, VecDeque<(f64, f64)>>,
+    ) -> Self {
+        Self {
+            name: &tuple.0,
+            is_greater: tuple.1,
+            threshold: tuple.2,
+            signals,
+        }
+    }
+
+    pub fn view(&self) -> Element<'a, Message> {
+        let latest_val = self
+            .signals
+            .get(self.name)
+            .and_then(|series| series.back())
+            .map(|(_x, y)| *y)
+            .unwrap_or(0.0);
+
+        let is_ok = if self.is_greater {
+            latest_val > self.threshold
+        } else {
+            latest_val < self.threshold
+        };
+
+        // Explicitly define the color as a concrete iced::Color
+        let box_color = if is_ok {
+            iced::Color::from_rgba(0.0, 0.5, 0.0, 0.75) // Green
+        } else {
+            iced::Color::from_rgba(0.5, 0.0, 0.0, 0.75) // Red
+        };
+
+        let operator_str = if self.is_greater { ">" } else { "<" };
+
+        container(
+            text(format!(
+                "{}\n{} {:.1}  |  Value: {:.2}",
+                self.name, operator_str, self.threshold, latest_val
+            ))
+            .size(12)
+            .color(iced::Color::WHITE),
+        )
+        .padding(10)
+        // Corrected Styling Logic
+        .style(move |_theme| container::Style {
+            background: Some(Background::Color(box_color)),
+            text_color: Some(iced::Color::WHITE),
+            ..Default::default()
+        })
+        .into()
     }
 }

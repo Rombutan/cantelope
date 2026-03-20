@@ -70,6 +70,7 @@ fn main() {
 
     let args_en_aux = args.en_aux;
     let args_plots = args.plots.clone(); // WHYYY
+    let args_regrens = args.regrens.clone();
 
     let handle = std::thread::spawn(move || {
         data_loop(&args, &dbc_content, tx);
@@ -78,7 +79,7 @@ fn main() {
     #[cfg(feature = "plot")]
     if args_en_aux {
         println!("Starting plotting window!");
-        _ = PlotWindow::run(rx, args_plots);
+        _ = PlotWindow::run(rx, args_plots, args_regrens);
     }
 
     _ = handle.join();

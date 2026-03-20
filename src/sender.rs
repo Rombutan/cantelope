@@ -1,7 +1,9 @@
 use bytemuck::{Pod, Zeroable};
 use std::env;
-use tokio::io::AsyncWriteExt;
-use tokio::net::TcpListener;
+extern crate sctp;
+use sctp::*;
+use std::io::Write;
+use std::net::SocketAddr;
 use tokio::sync::broadcast;
 
 pub mod socketwrap;
@@ -60,11 +62,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // 4. TCP Server Task
-    let listener = TcpListener::bind(&local_port).await?;
+    let listener: SctpListener = SctpListener::bind(&local_port)?;
     println!("Binary TCP Relay listening on {}", local_port);
 
     loop {
-        let (mut socket, addr) = listener.accept().await?;
+        let (mut socket, addr): (SctpStream, SocketAddr) = listener.accept()?;
         println!("Client connected: {}", addr);
         socket.set_nodelay(true).unwrap();
 
@@ -76,7 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Ok(frame) => {
                         // Cast the struct directly to bytes and send
                         let bytes = bytemuck::bytes_of(&frame);
-                        if let Err(e) = socket.write_all(bytes).await {
+                        if let Err(e) = socket.write_all(bytes) {
                             eprintln!("Client {} disconnected: {}", addr, e);
                             break;
                         }

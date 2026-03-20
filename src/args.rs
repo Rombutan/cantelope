@@ -18,6 +18,7 @@ pub struct Args {
     pub cache_ms: f64,
     pub aux_outputs: Vec<String>,
     pub plots: Vec<Vec<String>>,
+    pub regrens: Vec<(String, bool, f64)>,
     pub en_ipm: bool,
     pub en_aux: bool,
 }
@@ -86,6 +87,40 @@ pub fn process_args() -> Args {
                 args.aux_outputs.extend(list.clone());
                 args.plots.push(list);
                 args.en_aux = true;
+            }
+
+            "--regrens" | "-rg" => {
+                let raw_val = argsi
+                    .next()
+                    .expect("--regre requires at least one field and threshold");
+
+                for item in raw_val.split(',') {
+                    // Find the operator and its type
+                    let (op_idx, is_greater) = if let Some(idx) = item.find(']') {
+                        (idx, true) // 1 for >
+                    } else if let Some(idx) = item.find('[') {
+                        (idx, false) // 0 for <
+                    } else {
+                        panic!(
+                            "Invalid format for '{}'. Expected NAME<THRESHOLD or NAME>THRESHOLD",
+                            item
+                        );
+                    };
+
+                    // Split based on the found index
+                    let name_str = &item[..op_idx];
+                    let threshold_str = &item[op_idx + 1..];
+
+                    let name = name_str.to_string();
+                    let threshold: f64 = threshold_str
+                        .parse()
+                        .expect("Threshold must be a valid float");
+
+                    // Tuple is (String, bool, f64)
+                    // is_greater (bool) will be true (1) for > and false (0) for <
+                    args.regrens.push((name.clone(), is_greater, threshold));
+                    args.aux_outputs.push(name);
+                }
             }
 
             _ => {
