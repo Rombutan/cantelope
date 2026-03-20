@@ -284,7 +284,14 @@ impl<'a> Chart<Message> for SignalChart<'a> {
             .build_cartesian_2d(min_x..max_x, min_y - 0.01..max_y + 0.01)
             .unwrap();
 
-        chart.configure_mesh().draw().unwrap();
+        let text_color = self.text_color;
+
+        chart
+            .configure_mesh()
+            .label_style(("sans-serif", 12).into_font().color(&text_color))
+            .axis_style(&text_color)
+            .draw()
+            .unwrap();
 
         for (_idx, (name, series)) in self.signals.iter().enumerate() {
             if self.toplot.contains(name) {
@@ -297,8 +304,6 @@ impl<'a> Chart<Message> for SignalChart<'a> {
                     .legend(move |(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], style));
             }
         }
-
-        let text_color = self.text_color;
 
         chart
             .configure_series_labels()
