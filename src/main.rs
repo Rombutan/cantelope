@@ -4,7 +4,6 @@ use std::fs;
 
 // Arrow IP elements
 use arrow::datatypes::{DataType, Field, Schema};
-use std::sync::Arc;
 
 // Literally only for cleaner print
 use std::io::{self, Write};
@@ -15,6 +14,7 @@ use store::{Column, GenericColumn};
 
 // Custom argument parsing
 pub mod args;
+use std::sync::{Arc, RwLock};
 
 // Custom Candump parsing
 use candump::CanDumpParser;
@@ -62,30 +62,30 @@ impl FloatExt for f64 {
 }
 
 fn main() {
-    let args = args::process_args(); // Load arguments into a struct
+    let args = Arc::new(RwLock::new(args::process_args())); // Load arguments into a struct
 
-    let dbc_content = fs::read_to_string(&args.dbcfile).unwrap(); // Load DBC file contents into string
+    let dbc_content = fs::read_to_string(&args.read().unwrap().dbcfile).unwrap(); // Load DBC file contents into string
 
     let (tx, rx) = mpsc::sync_channel::<DataPoint>(100); // For transfers from the data loop thread to main
 
-    let args_en_aux = args.en_aux;
-    let args_plots = args.plots.clone(); // WHYYY
-    let args_regrens = args.regrens.clone();
+    let args_en_aux = args.read().unwrap().en_aux;
+
+    let args_data_thread = Arc::clone(&args);
 
     let handle = std::thread::spawn(move || {
-        data_loop(&args, &dbc_content, tx);
+        data_loop(args_data_thread, &dbc_content, tx);
     });
 
     #[cfg(feature = "plot")]
     if args_en_aux {
         println!("Starting plotting window!");
-        _ = PlotWindow::run(rx, args_plots, args_regrens);
+        _ = PlotWindow::run(rx, args);
     }
 
     _ = handle.join();
 }
 
-fn data_loop(args: &args::Args, dbc_content: &String, tx: SyncSender<DataPoint>) {
+fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: SyncSender<DataPoint>) {
     let dbc = Dbc::parse(&dbc_content).unwrap(); // Parse DBC
 
     // ------- CREATE SCHEMA
@@ -176,9 +176,9 @@ fn data_loop(args: &args::Args, dbc_content: &String, tx: SyncSender<DataPoint>)
     let stdin = io::stdin();
     let time_start;
 
-    match &args.candatainput {
+    match &args.read().unwrap().candatainput {
         CanDataInput::File => {
-            _ = parser = CanDumpParser::new(&args.input).unwrap();
+            _ = parser = CanDumpParser::new(&args.read().unwrap().input).unwrap();
             parser.parse();
             time_start = parser.get_timestamp();
         }
@@ -190,7 +190,7 @@ fn data_loop(args: &args::Args, dbc_content: &String, tx: SyncSender<DataPoint>)
         }
         #[cfg(feature = "socket")]
         CanDataInput::Socket => {
-            cansocket = Some(socketwrap::CanWrapper::new(&args.input).unwrap());
+            cansocket = Some(socketwrap::CanWrapper::new(&args.read().unwrap().input).unwrap());
             _ = cansocket.as_mut().unwrap().parse();
             time_start = cansocket.as_mut().unwrap().get_timestamp();
         }
@@ -199,7 +199,7 @@ fn data_loop(args: &args::Args, dbc_content: &String, tx: SyncSender<DataPoint>)
             panic!("Socketcan not enabled in this build")
         }
         CanDataInput::Remote => {
-            tcpsocket = Some(tcpwrapper::TcpWrapper::new(&args.input));
+            tcpsocket = Some(tcpwrapper::TcpWrapper::new(&args.read().unwrap().input));
             tcpsocket.as_mut().unwrap().parse().unwrap();
             time_start = tcpsocket.as_mut().unwrap().get_timestamp();
         }
@@ -225,7 +225,7 @@ fn data_loop(args: &args::Args, dbc_content: &String, tx: SyncSender<DataPoint>)
         let id;
         let data;
 
-        match &args.candatainput {
+        match &args.read().unwrap().candatainput {
             CanDataInput::File => {
                 exit.store(parser.parse(), Ordering::SeqCst);
 
@@ -269,7 +269,7 @@ fn data_loop(args: &args::Args, dbc_content: &String, tx: SyncSender<DataPoint>)
                     let col = &mut columns[schema.index_of(signal.name).unwrap()];
                     if !is_filled[schema.index_of(signal.name).unwrap()] {
                         // Only save the first value from each chunk (as opposed to prev version saving last)
-                        if args.en_ipm {
+                        if args.read().unwrap().en_ipm {
                             match col {
                                 GenericColumn::Bool(c) => c.push(Some(signal.value.is_nearly(1.0))),
                                 GenericColumn::I8(c) => c.push(Some(signal.value as i8)),
@@ -283,7 +283,13 @@ fn data_loop(args: &args::Args, dbc_content: &String, tx: SyncSender<DataPoint>)
                             is_filled[schema.index_of(signal.name).unwrap()] = true;
                         }
 
-                        if args.aux_outputs.iter().any(|s| s == &signal.name) {
+                        if args
+                            .read()
+                            .unwrap()
+                            .aux_outputs
+                            .iter()
+                            .any(|s| s == &signal.name)
+                        {
                             let _ = tx.try_send((
                                 signal.name.to_string(),
                                 relative_time_rcv,
@@ -296,10 +302,10 @@ fn data_loop(args: &args::Args, dbc_content: &String, tx: SyncSender<DataPoint>)
             Err(e) => println!("Signal: {} Data: {:02x?}  Error: {}", id, &data, e),
             //Err(e) => _ = e,
         }
-        if relative_time_rcv > (&args.cache_ms * f64::from(num_chunks))
+        if relative_time_rcv > (&args.read().unwrap().cache_ms * f64::from(num_chunks))
             || exit.load(Ordering::SeqCst)
         {
-            if args.en_ipm {
+            if args.read().unwrap().en_ipm {
                 let col = &mut columns[schema.index_of("Time_ms").unwrap()];
                 is_filled[schema.index_of("Time_ms").unwrap()] = true;
                 match col {
@@ -323,9 +329,9 @@ fn data_loop(args: &args::Args, dbc_content: &String, tx: SyncSender<DataPoint>)
         }
     }
     println!("");
-    if args.en_ipm {
+    if args.read().unwrap().en_ipm {
         let batch = store::finish_record_batch(columns, schema);
-        store::write_record_batch_to_parquet(&batch, &args.output).unwrap();
+        store::write_record_batch_to_parquet(&batch, &args.read().unwrap().output).unwrap();
         println!("Finished writting out!");
     }
 }

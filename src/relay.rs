@@ -1,7 +1,6 @@
 use std::env;
 use std::io::{Read, Write};
-extern crate sctp;
-use sctp::*;
+use std::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast;
 
 #[tokio::main]
@@ -25,7 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Inside your source task
     tokio::task::spawn_blocking(move || {
         // This is now a standard blocking call
-        let mut stream = SctpStream::connect(remote_addr).expect("Connect failed");
+        let mut stream = TcpStream::connect(remote_addr).expect("Connect failed");
         let mut buffer = [0; 4096];
         loop {
             match stream.read(&mut buffer) {
@@ -40,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // 4. Task: Listen for Local Consumers (The Server)
-    let listener = SctpListener::bind(&local_port).unwrap();
+    let listener = TcpListener::bind(&local_port).unwrap();
     println!("Relay server listening on {}", local_port);
 
     loop {

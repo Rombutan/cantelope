@@ -23,6 +23,19 @@ pub struct Args {
     pub en_aux: bool,
 }
 
+impl Args {
+    pub fn setup_aux_outputs(&mut self) {
+        for plot in &self.plots {
+            for output in plot {
+                if !self.aux_outputs.contains(&output) {
+                    self.aux_outputs.push(output.clone());
+                    self.en_aux = true;
+                }
+            }
+        }
+    }
+}
+
 pub fn process_args() -> Args {
     let mut argsi = env::args().skip(1); // skip program name
     let mut args = Args::default();
@@ -84,9 +97,7 @@ pub fn process_args() -> Args {
                 // It's fine if things in args.aux_outputs are duplicated, all it will do is waste a few bytes of memory :()
                 let raw_val = argsi.next().expect("--plot requires a value");
                 let list: Vec<String> = raw_val.split(',').map(|s| s.to_string()).collect();
-                args.aux_outputs.extend(list.clone());
                 args.plots.push(list);
-                args.en_aux = true;
             }
 
             "--regrens" | "-rg" => {
@@ -128,6 +139,8 @@ pub fn process_args() -> Args {
             }
         }
     }
+
+    args.setup_aux_outputs();
 
     return args;
 }

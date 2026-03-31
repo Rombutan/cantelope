@@ -18,6 +18,10 @@ use iced::widget::{container, text};
 
 pub type DataPoint = (String, f64, f64); // (signal, x, y)
 
+use crate::args;
+use args::Args;
+use std::sync::RwLock;
+
 fn int_from_str(name: &str) -> usize {
     let mut hasher = DefaultHasher::new();
     name.hash(&mut hasher);
@@ -30,8 +34,7 @@ pub struct PlotWindow {
     receiver: Arc<Mutex<Receiver<DataPoint>>>,
     signals: HashMap<String, VecDeque<(f64, f64)>>,
     last_redraw: Instant,
-    plots: Vec<Vec<String>>,
-    regrens: Vec<(String, bool, f64)>,
+    args: Arc<RwLock<Args>>,
     play: bool,
     time_range_text: String,
     x_window: f64,
@@ -70,11 +73,7 @@ impl PlotWindow {
     //     })
     // }
 
-    pub fn run(
-        receiver: Receiver<DataPoint>,
-        _plots: Vec<Vec<String>>,
-        _regrens: Vec<(String, bool, f64)>,
-    ) -> iced::Result {
+    pub fn run(receiver: Receiver<DataPoint>, _args: Arc<RwLock<Args>>) -> iced::Result {
         let receiver = Arc::new(Mutex::new(receiver));
         iced::application(
             {
@@ -85,8 +84,7 @@ impl PlotWindow {
                             receiver: Arc::clone(&receiver),
                             signals: HashMap::new(),
                             last_redraw: Instant::now(),
-                            plots: _plots.clone(), // ... Why? WHy? WHY? WHY DOES EVERYTHING NEED TO BE CLONE??? FUCK YOU RUST
-                            regrens: _regrens.clone(),
+                            args: Arc::clone(&_args),
                             play: true,
                             time_range_text: String::from("3000"),
                             x_window: 3000.0,
@@ -184,14 +182,22 @@ impl PlotWindow {
             _ => RGBColor(0, 0, 0),
         };
 
-        let status_row = self
-            .regrens
-            .iter()
-            .fold(row![].spacing(10).padding(10), |row, tuple| {
-                row.push(SignalStatus::new(tuple, &self.signals).view())
-            });
+        let args_gaurd = self.args.read().unwrap();
+        let regrens = args_gaurd.regrens.clone();
+        let status_row =
+            args_gaurd
+                .regrens
+                .iter()
+                .fold(row![].spacing(10).padding(10), |row, tuple| {
+                    // .clone() the tuple (or the strings inside it)
+                    // so SignalStatus owns the data, not a reference to the lock
+                    row.push(SignalStatus::new(tuple.clone(), &self.signals).view())
+                });
 
         let charts: Vec<Element<Message>> = self
+            .args
+            .read()
+            .unwrap()
             .plots
             .iter()
             .map(|plot_group| {
@@ -318,7 +324,7 @@ impl<'a> Chart<Message> for SignalChart<'a> {
 
 struct SignalStatus<'a> {
     // The specific signal name to look up
-    name: &'a str,
+    name: String,
     // true for >, false for <
     is_greater: bool,
     threshold: f64,
@@ -328,11 +334,11 @@ struct SignalStatus<'a> {
 
 impl<'a> SignalStatus<'a> {
     pub fn new(
-        tuple: &'a (String, bool, f64),
+        tuple: (String, bool, f64),
         signals: &'a HashMap<String, VecDeque<(f64, f64)>>,
     ) -> Self {
         Self {
-            name: &tuple.0,
+            name: tuple.0,
             is_greater: tuple.1,
             threshold: tuple.2,
             signals,
@@ -342,7 +348,7 @@ impl<'a> SignalStatus<'a> {
     pub fn view(&self) -> Element<'a, Message> {
         let latest_val = self
             .signals
-            .get(self.name)
+            .get(&self.name)
             .and_then(|series| series.back())
             .map(|(_x, y)| *y)
             .unwrap_or(0.0);

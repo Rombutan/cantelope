@@ -1,9 +1,8 @@
 use bytemuck::{Pod, Zeroable};
 use std::env;
-extern crate sctp;
-use sctp::*;
 use std::io::Write;
 use std::net::SocketAddr;
+use std::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast;
 
 pub mod socketwrap;
@@ -62,11 +61,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // 4. TCP Server Task
-    let listener: SctpListener = SctpListener::bind(&local_port)?;
+    let listener: TcpListener = TcpListener::bind(&local_port)?;
     println!("Binary TCP Relay listening on {}", local_port);
 
     loop {
-        let (mut socket, addr): (SctpStream, SocketAddr) = listener.accept()?;
+        let (mut socket, addr): (TcpStream, SocketAddr) = listener.accept()?;
         println!("Client connected: {}", addr);
         socket.set_nodelay(true).unwrap();
 
