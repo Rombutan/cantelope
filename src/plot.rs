@@ -46,33 +46,13 @@ pub enum Message {
     Tick,
     Pause,
     TimeRange(String),
+    PlotChanged((usize, String)),
+    RegrensChanged(String),
     ThemeChanged(iced::theme::Mode),
     Nothing,
 }
 
-pub struct Flags {
-    pub receiver: Receiver<DataPoint>,
-}
-
-impl Default for Flags {
-    fn default() -> Self {
-        panic!("Flags::default() should never be used")
-    }
-}
-
 impl PlotWindow {
-    // pub fn run(receiver: Receiver<DataPoint>) -> iced::Result {
-    //     <PlotWindow as iced::Application>::run(Settings {
-    //         flags: Flags { receiver },
-    //         antialiasing: true,
-    //         window: iced::window::Settings::default(),
-    //         id: None,
-    //         default_font: MY_FONT,
-    //         default_text_size: 16.0,
-    //         exit_on_close_request: true,
-    //     })
-    // }
-
     pub fn run(receiver: Receiver<DataPoint>, _args: Arc<RwLock<Args>>) -> iced::Result {
         let receiver = Arc::new(Mutex::new(receiver));
         iced::application(
@@ -148,7 +128,16 @@ impl PlotWindow {
             Message::ThemeChanged(mode) => {
                 self.theme_mode = mode;
             }
+            Message::RegrensChanged(raw_value) => {
+                let mut args_lock = self.args.write().unwrap();
+                args_lock.regrens_raw = raw_value.clone();
+                if let Ok(val) = args::parse_regrens(raw_value) {
+                    args_lock.regrens = val;
+                    args_lock.setup_aux_outputs();
+                }
+            }
             Message::Nothing => {}
+            _ => {}
         }
     }
 
@@ -170,20 +159,25 @@ impl PlotWindow {
 
     fn view(&self) -> Element<'_, Message> {
         use iced::widget::row;
+        let args_gaurd = self.args.read().unwrap();
+
         let controls = Row::new()
             .spacing(10)
             .padding(10)
             .push(Button::new("Pause").on_press(Message::Pause))
             .push(Text::new(format!("Time range in ms:")))
-            .push(text_input("3000", &self.time_range_text).on_input(Message::TimeRange));
+            .push(text_input("3000", &self.time_range_text).on_input(Message::TimeRange))
+            .push(Text::new(format!("Regrens:")))
+            .push(
+                text_input("Regrens", &self.args.read().unwrap().regrens_raw)
+                    .on_input(Message::RegrensChanged),
+            );
 
         let text_color = match self.theme_mode {
             iced::theme::Mode::Dark => RGBColor(255, 255, 255),
             _ => RGBColor(0, 0, 0),
         };
 
-        let args_gaurd = self.args.read().unwrap();
-        let regrens = args_gaurd.regrens.clone();
         let status_row =
             args_gaurd
                 .regrens
