@@ -1,0 +1,11 @@
+dbcfile = ""
+input = "vcan0"
+output = ""
+candatainput = "Socket"
+cache_ms = 0.0
+aux_outputs = ["TMAIN_DATA_STEERING", "SME_THROTL_MBB_Alive"]
+plots = [["TMAIN_DATA_STEERING"], ["SME_THROTL_MBB_Alive"]]
+regrens = [["SME_THROTL_MBB_Alive", true, 5.0]]
+regrens_raw = "SME_THROTL_MBB_Alive]5"
+en_ipm = false
+en_aux = true

@@ -1,7 +1,12 @@
+use iced::Alignment::Center;
 use iced::{
-    Background, Element, Length, Subscription, keyboard, time, widget::Button, widget::Column,
-    widget::Row, widget::Text, widget::text_input,
+    Background, Element, Length, Size, Subscription, keyboard, time, widget::Button,
+    widget::Column, widget::Row, widget::Text, widget::button, widget::text_input,
 };
+
+use iced_aw::menu::Menu;
+use iced_aw::{menu_bar, menu_items};
+
 use plotters::prelude::*;
 use plotters::style::Color;
 use plotters_iced2::{Chart, ChartBuilder, ChartWidget};
@@ -78,7 +83,8 @@ impl PlotWindow {
             PlotWindow::view,
         )
         .subscription(PlotWindow::subscription)
-        .title("Plots")
+        .title("Cantelope Plots")
+        .window_size(Size::new(1400.0, 1000.0))
         .centered()
         .run()
     }
@@ -131,6 +137,12 @@ impl PlotWindow {
             Message::RegrensChanged(raw_value) => {
                 let mut args_lock = self.args.write().unwrap();
                 args_lock.regrens_raw = raw_value.clone();
+
+                if raw_value.len() == 0 {
+                    args_lock.regrens.clear();
+                    args_lock.setup_aux_outputs();
+                }
+
                 if let Ok(val) = args::parse_regrens(raw_value) {
                     args_lock.regrens = val;
                     args_lock.setup_aux_outputs();
@@ -161,16 +173,35 @@ impl PlotWindow {
         use iced::widget::row;
         let args_gaurd = self.args.read().unwrap();
 
+        let menu_tpl = |items| {
+            Menu::new(items)
+                .width(Length::Fill)
+                .offset(0.0)
+                .spacing(10.0)
+                .close_on_item_click(false)
+                .padding(10.0)
+        };
+
+        let regren_menu = menu_tpl(menu_items!(
+            (
+                // Single widget inside the menu
+                text_input("Re(d)Gre(e)ns", &self.args.read().unwrap().regrens_raw)
+                    .on_input(Message::RegrensChanged)
+            )
+        ));
+
+        let regren_dropdown = menu_bar!((button("Re(d)Gre(e)ns"), regren_menu));
+
         let controls = Row::new()
             .spacing(10)
             .padding(10)
             .push(Button::new("Pause").on_press(Message::Pause))
-            .push(Text::new(format!("Time range in ms:")))
-            .push(text_input("3000", &self.time_range_text).on_input(Message::TimeRange))
-            .push(Text::new(format!("Regrens:")))
+            .push(regren_dropdown)
+            .push(Text::new(format!("Period(ms):")).align_y(Center))
             .push(
-                text_input("Regrens", &self.args.read().unwrap().regrens_raw)
-                    .on_input(Message::RegrensChanged),
+                text_input("3000", &self.time_range_text)
+                    .on_input(Message::TimeRange)
+                    .width(100),
             );
 
         let text_color = match self.theme_mode {

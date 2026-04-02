@@ -14,6 +14,7 @@ use store::{Column, GenericColumn};
 
 // Custom argument parsing
 pub mod args;
+use std::env;
 use std::sync::{Arc, RwLock};
 
 // Custom Candump parsing
@@ -22,7 +23,9 @@ use candump::CanDumpParser;
 // Custom TCP Can interface
 pub mod tcpwrapper;
 
+use crate::args::Args;
 use crate::args::CanDataInput;
+use serde::{Deserialize, Serialize};
 
 // SocketCAN
 #[cfg(feature = "socket")]
@@ -48,6 +51,8 @@ use plot::PlotWindow;
 #[cfg(not(feature = "plot"))]
 pub type DataPoint = (String, f64, f64); // (signal, x, y)
 
+use rfd::FileDialog;
+
 // Used for type decisions only
 trait FloatExt {
     fn is_nearly(&self, target: f64) -> bool;
@@ -62,7 +67,31 @@ impl FloatExt for f64 {
 }
 
 fn main() {
-    let args = Arc::new(RwLock::new(args::process_args())); // Load arguments into a struct
+    let start_args: Args;
+
+    if env::args().len() == 1 {
+        println!("Missing args, looking for config file");
+        let files = FileDialog::new()
+            .add_filter("toml", &["toml"])
+            .set_title("Choose Config File")
+            .pick_file();
+        start_args = toml::from_str(
+            &fs::read_to_string(files.unwrap().as_path().to_str().unwrap()).unwrap(),
+        )
+        .unwrap();
+    } else {
+        start_args = args::process_args();
+    }
+
+    let args = Arc::new(RwLock::new(start_args)); // Load arguments into a struct
+
+    if args.read().unwrap().dbcfile == "".to_string() {
+        let files = FileDialog::new()
+            .add_filter("dbc", &["dbc", "DBC"])
+            .set_title("Choose DBC File")
+            .pick_file();
+        args.write().unwrap().dbcfile = files.unwrap().as_path().to_str().unwrap().to_string();
+    }
 
     let dbc_content = fs::read_to_string(&args.read().unwrap().dbcfile).unwrap(); // Load DBC file contents into string
 

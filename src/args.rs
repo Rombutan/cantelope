@@ -1,6 +1,9 @@
-use std::env;
+use serde::{Deserialize, Serialize};
+use std::{env, fs};
 
-#[derive(Default)]
+use rfd::FileDialog;
+
+#[derive(Default, Serialize, Deserialize)]
 pub enum CanDataInput {
     #[default]
     File,
@@ -9,7 +12,7 @@ pub enum CanDataInput {
     Remote,
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct Args {
     pub dbcfile: String,
     pub input: String,
@@ -74,10 +77,14 @@ pub fn parse_regrens(raw_val: String) -> Result<Vec<(String, bool, f64)>, String
 }
 
 pub fn process_args() -> Args {
-    let mut argsi = env::args().skip(1); // skip program name
+    let mut argsi = env::args().skip(1).peekable(); // skip program name
     let mut args = Args::default();
     args.en_ipm = false;
     args.en_aux = false;
+
+    let mut emit_config = false;
+    let mut emit_config_path: String = "".to_string();
+
     while let Some(arg) = argsi.next() {
         match arg.as_str() {
             "--dbc" | "-d" => {
@@ -130,8 +137,6 @@ pub fn process_args() -> Args {
             }
 
             "--plot" | "-p" => {
-                // Make both args.aux_outputs which contains unstructured outputs and args.plots which is structured by plot
-                // It's fine if things in args.aux_outputs are duplicated, all it will do is waste a few bytes of memory :()
                 let raw_val = argsi.next().expect("--plot requires a value");
                 let list: Vec<String> = raw_val.split(',').map(|s| s.to_string()).collect();
                 args.plots.push(list);
@@ -145,6 +150,28 @@ pub fn process_args() -> Args {
                 args.regrens_raw = raw_val.clone();
                 args.regrens = parse_regrens(raw_val).unwrap();
             }
+            "--emit-config" => {
+                emit_config = true;
+
+                let mut need_dialogue = true;
+
+                if let Some(next) = argsi.peek() {
+                    if !next.starts_with('-') {
+                        let value = argsi.next().unwrap();
+                        emit_config_path = value;
+                        need_dialogue = false;
+                    }
+                }
+
+                if need_dialogue {
+                    let files = FileDialog::new()
+                        .add_filter("toml", &["toml"])
+                        .set_title("Choose Config File")
+                        .set_file_name("Cantelope_Config.toml")
+                        .save_file();
+                    emit_config_path = files.unwrap().as_path().to_str().unwrap().to_string();
+                }
+            }
 
             _ => {
                 eprintln!("Unknown argument: {}", arg);
@@ -153,6 +180,10 @@ pub fn process_args() -> Args {
     }
 
     args.setup_aux_outputs();
+
+    if emit_config {
+        fs::write(emit_config_path, toml::to_string(&args).unwrap()).unwrap();
+    }
 
     return args;
 }

@@ -6,7 +6,7 @@ edition = "2024"
 [features]
 default = ["plot"]
 socket = ["dep:socketcan"]
-plot = ["dep:plotters-iced2", "dep:plotters", "dep:iced"]
+plot = ["dep:plotters-iced2", "dep:plotters", "dep:iced", "dep:iced_aw"]
 
 [dependencies]
 socketcan = { version = '3.5.0', optional = true }
@@ -25,6 +25,11 @@ iced = { version = "0.14", features = ["canvas", "tokio"], optional = true}
 plotters = {version = "0.3", optional = true}
 plotters-iced2 = {version = "0.14", optional = true}
 smol_str = "0.3.6"
+iced_aw = {version = "0.13.1", optional = true}
+
+rfd = "0.17.2"
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.9"
 
 [profile.release]
 opt-level = 3
