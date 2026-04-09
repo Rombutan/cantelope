@@ -25,7 +25,6 @@ pub mod tcpwrapper;
 
 use crate::args::Args;
 use crate::args::CanDataInput;
-use serde::{Deserialize, Serialize};
 
 // SocketCAN
 #[cfg(feature = "socket")]
@@ -237,6 +236,7 @@ fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: SyncSender
     let exit = Arc::new(AtomicBool::new(false));
     let ex = exit.clone();
 
+    #[cfg(feature = "not_wasm")]
     ctrlc::set_handler(move || {
         println!("\nShutdown signal received...");
         ex.store(true, Ordering::SeqCst);

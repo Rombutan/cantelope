@@ -9,7 +9,8 @@ pub enum CanDataInput {
     File,
     Socket,
     Stdin,
-    Remote,
+    TcpRemote,
+    UdpRemote,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -92,18 +93,23 @@ pub fn process_args() -> Args {
                 args.dbcfile = value;
             }
 
-            "--input" | "-i" => {
-                let value = argsi.next().expect("--input requires a value");
-                args.input = value;
-            }
-
             "--candump" | "-f" => {
                 args.candatainput = CanDataInput::File;
+                args.input = argsi
+                    .next()
+                    .expect("--tcp requires a value")
+                    .parse()
+                    .unwrap()
             }
 
             #[cfg(feature = "socket")]
             "--socket" | "-s" => {
                 args.candatainput = CanDataInput::Socket;
+                args.input = argsi
+                    .next()
+                    .expect("--tcp requires a value")
+                    .parse()
+                    .unwrap()
             }
 
             #[cfg(not(feature = "socket"))]
@@ -115,8 +121,22 @@ pub fn process_args() -> Args {
                 args.candatainput = CanDataInput::Stdin;
             }
 
-            "--remote" | "-r" => {
-                args.candatainput = CanDataInput::Remote;
+            "--tcp" => {
+                args.candatainput = CanDataInput::TcpRemote;
+                args.input = argsi
+                    .next()
+                    .expect("--tcp requires a value")
+                    .parse()
+                    .unwrap()
+            }
+
+            "--udp" => {
+                args.candatainput = CanDataInput::UdpRemote;
+                args.input = argsi
+                    .next()
+                    .expect("--tcp requires a value")
+                    .parse()
+                    .unwrap()
             }
 
             "--cache-ms" | "-c" => {
