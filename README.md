@@ -5,6 +5,8 @@ Cantelope uses arrow internally and primarily outputs `.parquet` files, which ar
 
 This is a rust project built with arrow-rs, iced-rs, dbc-rs, and various other libraries.
 
+![](demo.png)
+
 ## Usage
 Example:
 ```
