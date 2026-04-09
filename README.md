@@ -45,7 +45,7 @@ Conveniently available is the sender binary which transmits packets in the appro
   - Each `--plot | -p` argument will enable and add a plot to the plotting window. Specify which signals to put on the plot by comma (but not space) seperating their names.
   - A `--regrens | -rg` argument (only provide one!) will add each comma seperated inequality to the regrens row. The "true" state of the inequality is mapped to green.
 - `--emit-config` tells cantelope to output a `.toml` with the arguments you've provided. If you provide a file name, it will use it. If you do not provide a file name, cantelope will try to call system gui for file selection. You can load a config file instead of passing arguments by passing exactly zero arguments, in which case cantelope will call the system gui to select a file.
-- 
+
 ## Build notes
 - If you're on linux, build with `--features socket` so you can use SocketCan interfaces.
 - If you wanna cross compile for windows, use cross.

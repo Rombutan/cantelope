@@ -226,7 +226,7 @@ fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: SyncSender
         CanDataInput::Socket => {
             panic!("Socketcan not enabled in this build")
         }
-        CanDataInput::Remote => {
+        CanDataInput::TcpRemote | CanDataInput::UdpRemote => {
             tcpsocket = Some(tcpwrapper::TcpWrapper::new(&args.read().unwrap().input));
             tcpsocket.as_mut().unwrap().parse().unwrap();
             time_start = tcpsocket.as_mut().unwrap().get_timestamp();
@@ -282,7 +282,7 @@ fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: SyncSender
             CanDataInput::Socket => {
                 panic!("Socketcan not yet supported")
             }
-            CanDataInput::Remote => {
+            CanDataInput::TcpRemote | CanDataInput::UdpRemote => {
                 tcpsocket.as_mut().unwrap().parse().unwrap();
                 timestamp = tcpsocket.as_mut().unwrap().get_timestamp();
                 id = tcpsocket.as_mut().unwrap().get_id();

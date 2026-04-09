@@ -77,6 +77,35 @@ pub fn parse_regrens(raw_val: String) -> Result<Vec<(String, bool, f64)>, String
     Ok(regrens)
 }
 
+const HELP_MSG: &str = "cantelope [options]
+Options:                        If no options, use file picker for config.
+    --dbc | d file.dbc          Specifies dbc file for decoding.
+                                If unprovided, use gui file picker.
+  Input Options:                If none given, use candump and file picker.
+    [--candump | -f file.log]   Specifies candump mode and file to use.
+                                Expects format:
+                                `(time in seconds) interface 0xid#0xdata`
+                                which is the default of `candump -L`.
+    [--stdin | -t]              Sets STDIN mode with candump format
+    [--tcp ip:port]             Sets TCP client mode and server address.
+  Output Options:
+    [--output | -o f.parquet]   Enables output to provided parquet file.
+    [--cache_ms | -c n]         Sets minimum time between rows. n is integer.
+  Plotting / GUI Options:
+    [--plot.. | -p.. SIG1,SIG2] Enables plotting and adds a plot to the window
+                                You can add as many plots as you can fit and
+                                as many signals to a plot as you want.
+    [--regrens | -rg SIG]13.5,..]
+                                Enables regren row. You can add as many signals
+                                to regren as you like. The inequality uses `[`
+                                and `]` in place of `<` and `>` to avoid shell
+                                issues. Comma seperate eahc inequality.
+  Config Options:
+    [--emit-config [file.toml]] Will create a `.toml` file with the full
+                                configuration provided. If you don't provide
+                                a file, the gui file picker will be called.
+    ";
+
 pub fn process_args() -> Args {
     let mut argsi = env::args().skip(1).peekable(); // skip program name
     let mut args = Args::default();
@@ -193,8 +222,13 @@ pub fn process_args() -> Args {
                 }
             }
 
+            "--help" | "-h" => {
+                println!("{}", HELP_MSG);
+                panic!();
+            }
+
             _ => {
-                eprintln!("Unknown argument: {}", arg);
+                eprintln!("Unknown argument: {} \n{}", arg, HELP_MSG);
             }
         }
     }
