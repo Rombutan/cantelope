@@ -6,7 +6,7 @@ edition = "2024"
 [features]
 default = ["plot", "not_wasm"]
 socket = ["dep:socketcan"]
-plot = ["dep:plotters-iced2", "dep:plotters", "dep:iced", "dep:iced_aw"]
+plot = ["dep:plotters-iced2", "dep:plotters", "dep:iced", "dep:iced_aw", "dep:rfd"]
 not_wasm = ["dep:ctrlc"]
 wasm = ["dep:iced_web"]
 
@@ -18,9 +18,10 @@ dbc-rs = { git = "https://github.com/Rombutan/dbc-rs.git" }
 candump = { git = "https://github.com/Rombutan/candump-rs.git" }
 arrow = { version = "57.2.0", default-features = false }
 parquet = { version = "57.2.0", default-features = false, features = ["arrow", "snap"] }
-tokio = { version = "1.1", default-features = false, features = ["rt", "macros", "sync"] }
+tokio = { version = "1.1", default-features = false, features = ["rt", "rt-multi-thread", "macros", "sync"] }
 bytemuck = { version = "1.14", features = ["derive"] }
 crossbeam-channel = "0.5"
+udp-stream = "0.0.12"
 
 # stuff for gui
 iced = { version = "0.14", features = ["canvas", "tokio"], optional = true}
@@ -30,7 +31,7 @@ plotters-iced2 = {version = "0.14", optional = true}
 smol_str = "0.3.6"
 iced_aw = {version = "0.13.1", optional = true}
 
-rfd = "0.17.2"
+rfd = {version = "0.17.2", optional = true}
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.9"
 

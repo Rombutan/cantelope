@@ -1,0 +1,70 @@
+use bytemuck::{Pod, Zeroable};
+use std::{net::SocketAddr, str::FromStr};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use udp_stream::UdpStream;
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+struct CanFrame {
+    timestamp: f64,
+    id: u32,
+    _pad: u32,
+    data: [u8; 8],
+}
+
+pub struct UdpWrapper {
+    stream: UdpStream,
+    timestamp: f64,
+    id: u32,
+    data: [u8; 8],
+}
+
+impl UdpWrapper {
+    pub async fn new(addr: &str) -> Self {
+        println!("Trying to connect to UDP");
+        let mut stream = UdpStream::connect(SocketAddr::from_str(addr).unwrap())
+            .await
+            .unwrap();
+
+        stream
+            .write("Please connecto bro".as_bytes())
+            .await
+            .unwrap();
+        println!("Connected to UDP");
+
+        Self {
+            stream: stream,
+            timestamp: 0.0,
+            id: 0,
+            data: [0; 8],
+        }
+    }
+
+    pub async fn parse(&mut self) -> Result<(), std::io::Error> {
+        let mut buffer = vec![0u8; std::mem::size_of::<CanFrame>()];
+        let n = self.stream.read(&mut buffer).await.unwrap();
+
+        if n != std::mem::size_of::<CanFrame>() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Expected 24 bytes, got {}", buffer.len()),
+            ));
+        }
+
+        let frame = *bytemuck::from_bytes::<CanFrame>(&buffer);
+        self.timestamp = frame.timestamp;
+        self.id = frame.id;
+        self.data = frame.data;
+        Ok(())
+    }
+
+    pub fn get_timestamp(&self) -> f64 {
+        self.timestamp
+    }
+    pub fn get_id(&self) -> u32 {
+        self.id
+    }
+    pub fn get_data(&self) -> [u8; 8] {
+        self.data
+    }
+}

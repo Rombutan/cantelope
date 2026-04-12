@@ -3,7 +3,7 @@ use std::{env, fs};
 
 use rfd::FileDialog;
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize, Clone)]
 pub enum CanDataInput {
     #[default]
     File,

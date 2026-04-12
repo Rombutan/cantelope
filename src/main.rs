@@ -22,6 +22,7 @@ use candump::CanDumpParser;
 
 // Custom TCP Can interface
 pub mod tcpwrapper;
+pub mod udpwrapper;
 
 use crate::args::Args;
 use crate::args::CanDataInput;
@@ -101,7 +102,13 @@ fn main() {
     let args_data_thread = Arc::clone(&args);
 
     let handle = std::thread::spawn(move || {
-        data_loop(args_data_thread, &dbc_content, tx);
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async move {
+                data_loop(args_data_thread, &dbc_content, tx).await;
+            });
     });
 
     #[cfg(feature = "plot")]
@@ -110,10 +117,11 @@ fn main() {
         _ = PlotWindow::run(rx, args);
     }
 
+    // Always wait for data_loop to finish, whether plot ran or not
     _ = handle.join();
 }
 
-fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: SyncSender<DataPoint>) {
+async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: SyncSender<DataPoint>) {
     let dbc = Dbc::parse(&dbc_content).unwrap(); // Parse DBC
 
     // ------- CREATE SCHEMA
@@ -201,10 +209,13 @@ fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: SyncSender
 
     let mut tcpsocket: Option<tcpwrapper::TcpWrapper> = None;
 
+    let mut udpsocket: Option<udpwrapper::UdpWrapper> = None;
+
     let stdin = io::stdin();
     let time_start;
 
-    match &args.read().unwrap().candatainput {
+    let input = &args.read().unwrap().candatainput.clone();
+    match input {
         CanDataInput::File => {
             _ = parser = CanDumpParser::new(&args.read().unwrap().input).unwrap();
             parser.parse();
@@ -226,10 +237,16 @@ fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: SyncSender
         CanDataInput::Socket => {
             panic!("Socketcan not enabled in this build")
         }
-        CanDataInput::TcpRemote | CanDataInput::UdpRemote => {
+        CanDataInput::TcpRemote => {
             tcpsocket = Some(tcpwrapper::TcpWrapper::new(&args.read().unwrap().input));
             tcpsocket.as_mut().unwrap().parse().unwrap();
             time_start = tcpsocket.as_mut().unwrap().get_timestamp();
+        }
+        CanDataInput::UdpRemote => {
+            let addr = args.read().unwrap().input.clone();
+            udpsocket = Some(udpwrapper::UdpWrapper::new(&addr).await);
+            udpsocket.as_mut().unwrap().parse().await.unwrap();
+            time_start = udpsocket.as_mut().unwrap().get_timestamp();
         }
     }
 
@@ -254,7 +271,8 @@ fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: SyncSender
         let id;
         let data;
 
-        match &args.read().unwrap().candatainput {
+        let input = &args.read().unwrap().candatainput.clone();
+        match input {
             CanDataInput::File => {
                 exit.store(parser.parse(), Ordering::SeqCst);
 
@@ -282,11 +300,17 @@ fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: SyncSender
             CanDataInput::Socket => {
                 panic!("Socketcan not yet supported")
             }
-            CanDataInput::TcpRemote | CanDataInput::UdpRemote => {
+            CanDataInput::TcpRemote => {
                 tcpsocket.as_mut().unwrap().parse().unwrap();
                 timestamp = tcpsocket.as_mut().unwrap().get_timestamp();
                 id = tcpsocket.as_mut().unwrap().get_id();
                 data = tcpsocket.as_mut().unwrap().get_data();
+            }
+            CanDataInput::UdpRemote => {
+                udpsocket.as_mut().unwrap().parse().await.unwrap();
+                timestamp = udpsocket.as_mut().unwrap().get_timestamp();
+                id = udpsocket.as_mut().unwrap().get_id();
+                data = udpsocket.as_mut().unwrap().get_data();
             }
         }
 
