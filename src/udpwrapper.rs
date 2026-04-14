@@ -1,6 +1,7 @@
 use bytemuck::{Pod, Zeroable};
 use std::{net::SocketAddr, str::FromStr};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::time::{Duration, timeout};
 use udp_stream::UdpStream;
 
 #[repr(C)]
@@ -42,7 +43,29 @@ impl UdpWrapper {
 
     pub async fn parse(&mut self) -> Result<(), std::io::Error> {
         let mut buffer = vec![0u8; std::mem::size_of::<CanFrame>()];
-        let n = self.stream.read(&mut buffer).await.unwrap();
+
+        let mut n = 0;
+        loop {
+            match timeout(Duration::from_secs(1), self.stream.read(&mut buffer)).await {
+                Ok(read_result) => {
+                    // The read completed before the timeout
+                    n = read_result.expect("Failed to read from udp");
+                    if n == 0 {
+                        // Connection closed by peer
+                        break;
+                    }
+                    break;
+                }
+                Err(_) => {
+                    println!("Timeout reached. Attempting to reconnect...");
+
+                    if let Err(e) = self.stream.write_all(b"timeout-ping").await {
+                        eprintln!("Failed to write to stream: {}", e);
+                        break;
+                    }
+                }
+            }
+        }
 
         if n != std::mem::size_of::<CanFrame>() {
             return Err(std::io::Error::new(

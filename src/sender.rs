@@ -75,7 +75,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .await
                 .unwrap(),
         ),
-        _ => panic!("Unknown server type: use -t (TCP) or -u (UDP/CoAP)"),
+        _ => panic!("Unknown server type: use -t (TCP) or -u (UDP)"),
     };
 
     println!("Listening on {}", local_port);
@@ -98,13 +98,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
 
         NetworkServer::Udp(listener) => loop {
-            let (mut socket, addr): (UdpStream, _) = listener.accept().await.unwrap();
+            let (mut socket, mut addr): (UdpStream, _) = listener.accept().await.unwrap();
             let mut rx = tx.subscribe();
             println!("New UDP client at {}", addr);
             tokio::spawn(async move {
                 while let Ok(frame) = rx.recv().await {
                     let bytes = bytemuck::bytes_of(&frame);
-                    socket.write(&bytes).await.unwrap();
+                    match socket.write(&bytes).await {
+                        Ok(_v) => {}
+                        Err(v) => {
+                            println!("{}", v);
+                            break;
+                        }
+                    }
                 }
                 println!("UDP client {} disconnected", addr);
             });
