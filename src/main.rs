@@ -67,7 +67,7 @@ impl FloatExt for f64 {
 }
 
 fn main() {
-    let start_args: Args;
+    let mut start_args: Args;
 
     if env::args().len() == 1 {
         println!("Missing args, looking for config file");
@@ -79,6 +79,7 @@ fn main() {
             &fs::read_to_string(files.unwrap().as_path().to_str().unwrap()).unwrap(),
         )
         .unwrap();
+        start_args.setup_aux_outputs();
     } else {
         start_args = args::process_args();
     }

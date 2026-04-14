@@ -7,19 +7,22 @@ use iced::{
 use iced_aw::menu::Menu;
 use iced_aw::{menu_bar, menu_items};
 
+use plotters::coord::types::RangedCoordf64;
 use plotters::prelude::*;
 use plotters::style::Color;
 use plotters_iced2::{Chart, ChartBuilder, ChartWidget};
 use std::collections::hash_map::DefaultHasher;
-use std::f64;
 use std::hash::{Hash, Hasher};
 use std::{
     collections::{HashMap, VecDeque},
     sync::{Arc, Mutex, mpsc::Receiver},
     time::Instant,
 };
+use std::{f64, usize};
 
 use iced::widget::{container, text};
+
+use itertools::Itertools;
 
 pub type DataPoint = (String, f64, f64); // (signal, x, y)
 
@@ -328,8 +331,60 @@ impl<'a> Chart<Message> for SignalChart<'a> {
             if self.toplot.contains(name) {
                 let style = Palette99::pick(int_from_str(name)).stroke_width(3);
 
+                let mut all_points_iter = series.iter().copied().multipeek();
+                let mut cur_seg: Vec<(f64, f64)> = Vec::new();
+                let mut last_time = all_points_iter.peek().unwrap_or(&(0.0, 0.0)).0;
+
+                // Find 10th percentile ish gap
+                let mut smallest_gaps = [f64::MAX; 10];
+
+                let mut last_t = match all_points_iter.peek() {
+                    Some(p) => p.0,
+                    None => 0.0,
+                };
+
+                for _ in 0..100 {
+                    if let Some(p) = all_points_iter.peek() {
+                        let gap = p.0 - last_t;
+                        last_t = p.0;
+
+                        if gap > 0.0 {
+                            // If this gap is smaller than the largest "small" gap we've tracked
+                            if gap < smallest_gaps[9] {
+                                smallest_gaps[9] = gap;
+                                // Keep the 10-element array sorted so index 9 is always the max
+                                smallest_gaps.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                            }
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                all_points_iter.reset_peek();
+                let base_gap = if smallest_gaps[9] == f64::MAX {
+                    1.0
+                } else {
+                    smallest_gaps[9]
+                };
+                let mut tengap = base_gap * 10.0;
+
+                for (t, v) in all_points_iter {
+                    if t - last_time > (tengap / 10.0) * 1.5 {
+                        // Should break on a missed or highly delayed packet
+                        chart
+                            .draw_series(LineSeries::new(cur_seg.clone(), style))
+                            .unwrap();
+                        cur_seg.clear()
+                    } else {
+                        tengap = tengap * 0.9;
+                        tengap = tengap + (t - last_time);
+                    }
+
+                    cur_seg.push((t, v));
+                    last_time = t;
+                }
                 chart
-                    .draw_series(LineSeries::new(series.iter().copied(), style))
+                    .draw_series(LineSeries::new(cur_seg.clone(), style))
                     .unwrap()
                     .label(name)
                     .legend(move |(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], style));
