@@ -62,18 +62,15 @@ impl UdpWrapper {
                 Ok(read_result) => {
                     // The read completed before the timeout
                     n = read_result.expect("Failed to read from udp");
-                    if n == 0 {
-                        // Connection closed by peer
+                    if n == std::mem::size_of::<CanFrame>() {
                         break;
                     }
-                    break;
                 }
                 Err(_) => {
                     println!("Timeout reached. Attempting to reconnect...");
 
                     if let Err(e) = self.socket.send(b"timeout-ping").await {
                         eprintln!("Failed to write to stream: {}", e);
-                        break;
                     }
                 }
             }
