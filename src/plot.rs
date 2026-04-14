@@ -7,11 +7,13 @@ use iced::{
 use iced_aw::menu::Menu;
 use iced_aw::{menu_bar, menu_items};
 
+use iced::widget::{container, text};
 use plotters::coord::types::RangedCoordf64;
 use plotters::prelude::*;
 use plotters::style::Color;
 use plotters_iced2::{Chart, ChartBuilder, ChartWidget};
 use std::collections::hash_map::DefaultHasher;
+use std::fmt::Write;
 use std::hash::{Hash, Hasher};
 use std::{
     collections::{HashMap, VecDeque},
@@ -19,8 +21,6 @@ use std::{
     time::Instant,
 };
 use std::{f64, usize};
-
-use iced::widget::{container, text};
 
 use itertools::Itertools;
 
@@ -383,10 +383,13 @@ impl<'a> Chart<Message> for SignalChart<'a> {
                     cur_seg.push((t, v));
                     last_time = t;
                 }
+
+                let mut series_name = name.clone().to_string();
+                write!(series_name, ": {:.2}hz", tengap / 10.0).unwrap();
                 chart
                     .draw_series(LineSeries::new(cur_seg.clone(), style))
                     .unwrap()
-                    .label(name)
+                    .label(series_name)
                     .legend(move |(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], style));
             }
         }
