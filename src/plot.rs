@@ -8,7 +8,6 @@ use iced_aw::menu::Menu;
 use iced_aw::{menu_bar, menu_items};
 
 use iced::widget::{container, text};
-use plotters::coord::types::RangedCoordf64;
 use plotters::prelude::*;
 use plotters::style::Color;
 use plotters_iced2::{Chart, ChartBuilder, ChartWidget};
@@ -444,9 +443,9 @@ impl<'a> SignalStatus<'a> {
 
         // Explicitly define the color as a concrete iced::Color
         let box_color = if is_ok {
-            iced::Color::from_rgba(0.0, 0.5, 0.0, 0.75) // Green
+            iced::Color::from_rgba(0.0, 0.5, 0.0, 0.8) // Green
         } else {
-            iced::Color::from_rgba(0.5, 0.0, 0.0, 0.75) // Red
+            iced::Color::from_rgba(0.5, 0.0, 0.0, 0.8) // Red
         };
 
         let operator_str = if self.is_greater { ">" } else { "<" };

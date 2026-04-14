@@ -1,10 +1,7 @@
 use bytemuck::{Pod, Zeroable};
-use std::collections::HashMap;
 use std::env;
 use std::io::Write;
-use std::net::SocketAddr;
 use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, Mutex};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::broadcast;
 use udp_stream::UdpListener;
@@ -25,12 +22,6 @@ struct CanFrame {
 enum NetworkServer {
     Tcp(TcpListener),
     Udp(UdpListener), // just hold the bind address; we'll build our own UdpSocket
-}
-
-/// Per-observer state: their address and the last observe sequence number sent.
-struct Observer {
-    addr: SocketAddr,
-    seq: u32,
 }
 
 #[tokio::main]
@@ -113,7 +104,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tokio::spawn(async move {
                 while let Ok(frame) = rx.recv().await {
                     let bytes = bytemuck::bytes_of(&frame);
-                    socket.write(&bytes).await;
+                    socket.write(&bytes).await.unwrap();
                 }
                 println!("UDP client {} disconnected", addr);
             });

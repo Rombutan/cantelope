@@ -66,6 +66,15 @@ impl FloatExt for f64 {
     }
 }
 
+enum InputSource {
+    File(CanDumpParser),
+    #[cfg(feature = "socket")]
+    Can(socketwrap::CanWrapper),
+    Tcp(tcpwrapper::TcpWrapper),
+    Udp(udpwrapper::UdpWrapper),
+    Stdin((CanDumpParser, io::Stdin)),
+}
+
 fn main() {
     let mut start_args: Args;
 
@@ -201,53 +210,61 @@ async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: Sync
     }
     println!("\nBasis row size: {} bits", base_row_size);
     let schema = Arc::new(Schema::new(fields));
-    // ------
 
-    let mut parser = CanDumpParser::new(&String::default()).unwrap();
-
-    #[cfg(feature = "socket")]
-    let mut cansocket: Option<socketwrap::CanWrapper> = None;
-
-    let mut tcpsocket: Option<tcpwrapper::TcpWrapper> = None;
-
-    let mut udpsocket: Option<udpwrapper::UdpWrapper> = None;
-
-    let stdin = io::stdin();
-    let time_start;
-
-    let input = &args.read().unwrap().candatainput.clone();
-    match input {
+    let mut input: InputSource;
+    let inputname = &args.read().unwrap().candatainput.clone();
+    match inputname {
         CanDataInput::File => {
-            _ = parser = CanDumpParser::new(&args.read().unwrap().input).unwrap();
-            parser.parse();
-            time_start = parser.get_timestamp();
+            input = InputSource::File(CanDumpParser::new(&args.read().unwrap().input).unwrap());
         }
         CanDataInput::Stdin => {
-            let mut nextline = String::new();
-            stdin.read_line(&mut nextline).unwrap();
-            _ = parser.parse_string(nextline);
-            time_start = parser.get_timestamp();
+            input =
+                InputSource::Stdin((CanDumpParser::new(&String::default()).unwrap(), io::stdin()));
         }
         #[cfg(feature = "socket")]
         CanDataInput::Socket => {
-            cansocket = Some(socketwrap::CanWrapper::new(&args.read().unwrap().input).unwrap());
-            _ = cansocket.as_mut().unwrap().parse();
-            time_start = cansocket.as_mut().unwrap().get_timestamp();
+            input = InputSource::Can(
+                socketwrap::CanWrapper::new(&args.read().unwrap().input)
+                    .expect("Failed to open CAN Socket?\n"),
+            );
         }
         #[cfg(not(feature = "socket"))]
         CanDataInput::Socket => {
             panic!("Socketcan not enabled in this build")
         }
         CanDataInput::TcpRemote => {
-            tcpsocket = Some(tcpwrapper::TcpWrapper::new(&args.read().unwrap().input));
-            tcpsocket.as_mut().unwrap().parse().unwrap();
-            time_start = tcpsocket.as_mut().unwrap().get_timestamp();
+            input = InputSource::Tcp(tcpwrapper::TcpWrapper::new(&args.read().unwrap().input));
         }
         CanDataInput::UdpRemote => {
             let addr = args.read().unwrap().input.clone();
-            udpsocket = Some(udpwrapper::UdpWrapper::new(&addr).await);
-            udpsocket.as_mut().unwrap().parse().await.unwrap();
-            time_start = udpsocket.as_mut().unwrap().get_timestamp();
+            input = InputSource::Udp(udpwrapper::UdpWrapper::new(&addr).await);
+        }
+    }
+
+    let time_start;
+    match input {
+        InputSource::File(ref mut filestream) => {
+            filestream.parse();
+            time_start = filestream.get_timestamp();
+        }
+        InputSource::Stdin((ref mut parser, ref mut inputstream)) => {
+            let mut nextline = String::new();
+            inputstream.read_line(&mut nextline).unwrap();
+            _ = parser.parse_string(nextline);
+            time_start = parser.get_timestamp();
+        }
+        #[cfg(feature = "socket")]
+        InputSource::Can(ref mut socketwrapper) => {
+            socketwrapper.parse();
+            time_start = socketwrapper.get_timestamp();
+        }
+        InputSource::Tcp(ref mut networkwrapper) => {
+            networkwrapper.parse().unwrap();
+            time_start = networkwrapper.get_timestamp();
+        }
+        InputSource::Udp(ref mut networkwrapper) => {
+            networkwrapper.parse().await.unwrap();
+            time_start = networkwrapper.get_timestamp();
         }
     }
 
@@ -272,46 +289,39 @@ async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: Sync
         let id;
         let data;
 
-        let input = &args.read().unwrap().candatainput.clone();
         match input {
-            CanDataInput::File => {
-                exit.store(parser.parse(), Ordering::SeqCst);
-
-                timestamp = parser.get_timestamp();
-                id = parser.get_id();
-                data = parser.get_data();
+            InputSource::File(ref mut filestream) => {
+                filestream.parse();
+                timestamp = filestream.get_timestamp();
+                id = filestream.get_id();
+                data = filestream.get_data();
             }
-            CanDataInput::Stdin => {
+            InputSource::Stdin((ref mut parser, ref mut inputstream)) => {
                 let mut nextline = String::new();
-                stdin.read_line(&mut nextline).unwrap();
+                inputstream.read_line(&mut nextline).unwrap();
                 exit.store(parser.parse_string(nextline), Ordering::SeqCst);
-
                 timestamp = parser.get_timestamp();
                 id = parser.get_id();
                 data = parser.get_data();
             }
             #[cfg(feature = "socket")]
-            CanDataInput::Socket => {
-                cansocket.as_mut().unwrap().parse().unwrap();
-                timestamp = cansocket.as_mut().unwrap().get_timestamp();
-                id = cansocket.as_mut().unwrap().get_id();
-                data = cansocket.as_mut().unwrap().get_data();
+            InputSource::Can(ref mut socketwrapper) => {
+                socketwrapper.parse();
+                timestamp = socketwrapper.get_timestamp();
+                id = socketwrapper.get_id();
+                data = socketwrapper.get_data();
             }
-            #[cfg(not(feature = "socket"))]
-            CanDataInput::Socket => {
-                panic!("Socketcan not yet supported")
+            InputSource::Tcp(ref mut networkwrapper) => {
+                networkwrapper.parse().unwrap();
+                timestamp = networkwrapper.get_timestamp();
+                id = networkwrapper.get_id();
+                data = networkwrapper.get_data();
             }
-            CanDataInput::TcpRemote => {
-                tcpsocket.as_mut().unwrap().parse().unwrap();
-                timestamp = tcpsocket.as_mut().unwrap().get_timestamp();
-                id = tcpsocket.as_mut().unwrap().get_id();
-                data = tcpsocket.as_mut().unwrap().get_data();
-            }
-            CanDataInput::UdpRemote => {
-                udpsocket.as_mut().unwrap().parse().await.unwrap();
-                timestamp = udpsocket.as_mut().unwrap().get_timestamp();
-                id = udpsocket.as_mut().unwrap().get_id();
-                data = udpsocket.as_mut().unwrap().get_data();
+            InputSource::Udp(ref mut networkwrapper) => {
+                networkwrapper.parse().await.unwrap();
+                timestamp = networkwrapper.get_timestamp();
+                id = networkwrapper.get_id();
+                data = networkwrapper.get_data();
             }
         }
 
