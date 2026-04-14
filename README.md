@@ -1,5 +1,5 @@
 # Cantelope
-Existing tools like Busmaster, Can++, and SavvyCan emphasize debugging and reverse engineering CAN busses. This is a reasonably effecient, simple to use tool for handling CAN data in conjunction with alredy working DBC files which is focussed on the data, not the bus itself.
+Existing tools like Busmaster, Can++, and SavvyCan emphasize debugging and reverse engineering CAN busses. This is a reasonably effecient, simple to use tool for handling CAN data in conjunction with already working DBC files which is focussed on the data, not the bus itself.
 
 Cantelope uses arrow internally and primarily outputs `.parquet` files, which are effecient for data typically transmitted over CAN and are easily handled by data science tools like python pandas/polars as well as database engines like duckdb.
 

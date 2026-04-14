@@ -366,17 +366,17 @@ impl<'a> Chart<Message> for SignalChart<'a> {
                 } else {
                     smallest_gaps[9]
                 };
-                let mut tengap = base_gap * 10.0;
+                let mut tengap = base_gap * 100.0;
 
                 for (t, v) in all_points_iter {
-                    if t - last_time > (tengap / 10.0) * 1.5 {
+                    if t - last_time > (tengap / 100.0) * 1.5 {
                         // Should break on a missed or highly delayed packet
                         chart
                             .draw_series(LineSeries::new(cur_seg.clone(), style))
                             .unwrap();
                         cur_seg.clear()
                     } else {
-                        tengap = tengap * 0.9;
+                        tengap = tengap * 0.99;
                         tengap = tengap + (t - last_time);
                     }
 
@@ -385,7 +385,7 @@ impl<'a> Chart<Message> for SignalChart<'a> {
                 }
 
                 let mut series_name = name.clone().to_string();
-                write!(series_name, ": {:.2}hz", tengap / 10.0).unwrap();
+                write!(series_name, ": {:.1}hz", 1000.0 / (tengap / 100.0)).unwrap();
                 chart
                     .draw_series(LineSeries::new(cur_seg.clone(), style))
                     .unwrap()
