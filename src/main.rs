@@ -1,6 +1,7 @@
 // DBC Parsing
 use dbc_rs::Dbc;
-use std::fs;
+use iced::exit;
+use std::{fs, string};
 
 // Arrow IP elements
 use arrow::datatypes::{DataType, Field, Schema};
@@ -85,9 +86,16 @@ fn main() {
             .set_title("Choose Config File")
             .pick_file();
         start_args = toml::from_str(
-            &fs::read_to_string(files.unwrap().as_path().to_str().unwrap()).unwrap(),
+            &fs::read_to_string(
+                files
+                    .expect("File picking failed")
+                    .as_path()
+                    .to_str()
+                    .expect("Config path UTF-8 check failed?"),
+            )
+            .expect("Could not read file"),
         )
-        .unwrap();
+        .expect("Could not parse toml config file. Check formatting.");
         start_args.setup_aux_outputs();
     } else {
         start_args = args::process_args();
@@ -100,10 +108,16 @@ fn main() {
             .add_filter("dbc", &["dbc", "DBC"])
             .set_title("Choose DBC File")
             .pick_file();
-        args.write().unwrap().dbcfile = files.unwrap().as_path().to_str().unwrap().to_string();
+        args.write().unwrap().dbcfile = files
+            .expect("DBF File picker failed")
+            .as_path()
+            .to_str()
+            .expect("DBC path UTF-8 check failed?")
+            .to_string();
     }
 
-    let dbc_content = fs::read_to_string(&args.read().unwrap().dbcfile).unwrap(); // Load DBC file contents into string
+    let dbc_content =
+        fs::read_to_string(&args.read().unwrap().dbcfile).expect("Could not read DBC file"); // Load DBC file contents into string
 
     let (tx, rx) = mpsc::sync_channel::<DataPoint>(100); // For transfers from the data loop thread to main
 
@@ -132,7 +146,54 @@ fn main() {
 }
 
 async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: SyncSender<DataPoint>) {
-    let dbc = Dbc::parse(&dbc_content).unwrap(); // Parse DBC
+    let dbc;
+    match Dbc::parse(&dbc_content) {
+        Ok(v) => {
+            dbc = v;
+            println!("DBC Succesfully parsed!");
+        }
+        Err(v) => {
+            let line: String;
+            match v.line() {
+                Some(v) => {
+                    line = format!("{}", v);
+                }
+                None => {
+                    line = format!("None");
+                }
+            }
+            println!("DBC Parse failed :(\n Line: {}", line);
+            use dbc_rs::Error::*;
+            match v {
+                UnexpectedEof { line: _ } => {
+                    println!("  Unexpected EOF");
+                }
+                Expected { msg, line: _ } => {
+                    println!("  {}", msg);
+                }
+                InvalidChar { char, line: _ } => {
+                    println!("  Invalid character: {}", char);
+                }
+                MaxStrLength { max, line: _ } => {
+                    println!("  String exceeds maximum length of {}", max);
+                }
+                Nodes { msg, line: _ }
+                | Signal { msg, line: _ }
+                | Receivers { msg, line: _ }
+                | Message { msg, line: _ }
+                | Version { msg, line: _ } => {
+                    println!("  {}", msg);
+                }
+                Decoding(msg) | Encoding(msg) | Validation(msg) => {
+                    println!("  {}", msg);
+                }
+                Io(msg) => {
+                    println!("  {}", msg);
+                }
+            }
+            std::process::exit(78);
+        }
+    } // Parse DBC
 
     // ------- CREATE SCHEMA
     let mut base_row_size = 0; // Just to generate a cool "uncompressed data rate" number
@@ -249,7 +310,13 @@ async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: Sync
         }
         InputSource::Stdin((ref mut parser, ref mut inputstream)) => {
             let mut nextline = String::new();
-            inputstream.read_line(&mut nextline).unwrap();
+            match inputstream.read_line(&mut nextline) {
+                Ok(_n) => {}
+                Err(msg) => {
+                    println!("While trying to read from stdin: {}", msg);
+                    std::process::exit(74);
+                }
+            }
             _ = parser.parse_string(nextline);
             time_start = parser.get_timestamp();
         }
@@ -298,7 +365,13 @@ async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: Sync
             }
             InputSource::Stdin((ref mut parser, ref mut inputstream)) => {
                 let mut nextline = String::new();
-                inputstream.read_line(&mut nextline).unwrap();
+                match inputstream.read_line(&mut nextline) {
+                    Ok(_n) => {}
+                    Err(msg) => {
+                        println!("While trying to read from stdin: {}", msg);
+                        std::process::exit(74);
+                    }
+                }
                 exit.store(parser.parse_string(nextline), Ordering::SeqCst);
                 timestamp = parser.get_timestamp();
                 id = parser.get_id();

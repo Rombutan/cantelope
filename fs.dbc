@@ -60,7 +60,7 @@ BO_ 646 SME_RPDO_Max_Currents: 8 ETC
 BO_ 1154 SME_TPDO_Torque_speed: 8 SME
    SG_ SME_TRQSPD_SOC_Low_Traction : 32|1@1+ (1,0) [0|1] "" Vector__XXX
    SG_ SME_TRQSPD_SOC_Low_Hydraulic : 33|1@1+ (1,0) [0|1] "" Vector__XXX
-   SG_ SME_TRQSPD_Reverse : 34|1@1+ (1,0) [0|1] "" Vector__XXX
+   S_ SME_TRQSPD_Reverse : 34|1@1+ (1,0) [0|1] "" Vector__XXX
    SG_ SME_TRQSPD_Forward : 35|1@1+ (1,0) [0|1] "" Vector__XXX
    SG_ SME_TRQSPD_Park_Brake : 36|1@1+ (1,0) [0|1] "" Vector__XXX
    SG_ SME_TRQSPD_Pedal_Brake : 37|1@1+ (1,0) [0|1] "" Vector__XXX
