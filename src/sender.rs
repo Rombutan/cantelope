@@ -108,7 +108,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         Ok(_v) => {}
                         Err(v) => {
                             println!("{}", v);
-                            break;
+                            return;
                         }
                     }
                 }

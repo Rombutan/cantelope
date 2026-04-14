@@ -1,8 +1,9 @@
 use bytemuck::{Pod, Zeroable};
-use std::{net::SocketAddr, str::FromStr};
+use std::{net::Ipv4Addr, net::SocketAddr, str::FromStr};
+use tokio::net::UdpSocket;
+
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::{Duration, timeout};
-use udp_stream::UdpStream;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -14,7 +15,7 @@ struct CanFrame {
 }
 
 pub struct UdpWrapper {
-    stream: UdpStream,
+    socket: UdpSocket,
     timestamp: f64,
     id: u32,
     data: [u8; 8],
@@ -23,18 +24,29 @@ pub struct UdpWrapper {
 impl UdpWrapper {
     pub async fn new(addr: &str) -> Self {
         println!("Trying to connect to UDP");
-        let mut stream = UdpStream::connect(SocketAddr::from_str(addr).unwrap())
+        let remote = SocketAddr::from_str(addr).unwrap();
+        let socket = UdpSocket::bind(SocketAddr::new(
+            std::net::IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+            remote.port(),
+        ))
+        .await
+        .unwrap_or(
+            // This happens in loopback testing...
+            UdpSocket::bind(SocketAddr::new(
+                std::net::IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+                remote.port() + 1,
+            ))
             .await
-            .unwrap();
+            .unwrap(),
+        );
 
-        stream
-            .write("Please connecto bro".as_bytes())
-            .await
-            .unwrap();
+        socket.connect(addr).await.unwrap();
+
+        socket.send("Please connecto bro".as_bytes()).await.unwrap();
         println!("Connected to UDP");
 
         Self {
-            stream: stream,
+            socket: socket,
             timestamp: 0.0,
             id: 0,
             data: [0; 8],
@@ -46,7 +58,7 @@ impl UdpWrapper {
 
         let mut n = 0;
         loop {
-            match timeout(Duration::from_secs(1), self.stream.read(&mut buffer)).await {
+            match timeout(Duration::from_secs(1), self.socket.recv(&mut buffer)).await {
                 Ok(read_result) => {
                     // The read completed before the timeout
                     n = read_result.expect("Failed to read from udp");
@@ -59,7 +71,7 @@ impl UdpWrapper {
                 Err(_) => {
                     println!("Timeout reached. Attempting to reconnect...");
 
-                    if let Err(e) = self.stream.write_all(b"timeout-ping").await {
+                    if let Err(e) = self.socket.send(b"timeout-ping").await {
                         eprintln!("Failed to write to stream: {}", e);
                         break;
                     }
