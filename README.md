@@ -46,8 +46,10 @@ Conveniently available is the sender binary which transmits packets in the appro
 - GUI
   - Each `--plot | -p` argument will enable and add a plot to the plotting window. Specify which signals to put on the plot by comma (but not space) seperating their names.
   - A `--regrens | -rg` argument (only provide one!) will add each comma seperated inequality to the regrens row. The "true" state of the inequality is mapped to green.
-- `--emit-config` tells cantelope to output a `.toml` with the arguments you've provided. If you provide a file name, it will use it. If you do not provide a file name, cantelope will try to call system gui for file selection. You can load a config file instead of passing arguments by passing exactly zero arguments, in which case cantelope will call the system gui to select a file.
+- `--emit-config` tells cantelope to output a `.toml` with the arguments you've provided. If you provide a file name, it will use it. If you do not provide a file name, cantelope will try to call system gui for file selection. You can load a config file instead of passing arguments by passing exactly zero arguments, in which case cantelope will call the system gui to select a file. Emit config always happens after parsing all arguments, so no matter where you pass it, the config file written will represent the final state after all arguments are handled.
+- `--config` is used to pass a config file or force the file picker prompt if no file argument i sprovided. The config file path is stored and is shared with `--emit-config`, so a subsequent call to `--emit-config` will use the original path, unless `--emit-config` is given a path. Also, you can add arguments after `--config` to ovveride the config file. You can use this to kinda sorta edit config files if you want, but it's yaml, so just use a text editor.
 
 ## Build notes
 - If you're on linux, build with `--features socket` so you can use SocketCan interfaces.
+- Building with `--features end_data_on_close` will make it so that when the main window is closed, the data processing thread exits. This is handy on a telemetry client which isn't being relied on to save the data, so you don't end up with zombie processes.
 - If you wanna cross compile for windows, use cross.
