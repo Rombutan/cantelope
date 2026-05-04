@@ -6,9 +6,10 @@ edition = "2024"
 [features]
 default = ["plot", "not_wasm"]
 socket = ["dep:socketcan"]
-plot = ["dep:plotters-iced2", "dep:plotters", "dep:iced", "dep:iced_aw", "dep:rfd"]
+plot = ["dep:plotters-iced2", "dep:plotters", "dep:iced", "dep:iced_aw", "dep:rfd", "dep:termion"]
 not_wasm = ["dep:ctrlc"]
 wasm = ["dep:iced_web"]
+end_data_on_close = []
 
 [dependencies]
 socketcan = { version = '3.5.0', optional = true }
@@ -22,6 +23,7 @@ tokio = { version = "1.1", default-features = false, features = ["rt", "rt-multi
 bytemuck = { version = "1.14", features = ["derive"] }
 crossbeam-channel = "0.5"
 udp-stream = "0.0.12"
+socket2 = "0.6.3"
 
 # stuff for gui
 iced = { version = "0.14", features = ["canvas", "tokio"], optional = true}
@@ -30,6 +32,7 @@ plotters = {version = "0.3", optional = true}
 plotters-iced2 = {version = "0.14", optional = true}
 smol_str = "0.3.6"
 iced_aw = {version = "0.13.1", optional = true}
+termion = {version = "1.5.5", optional = true}
 
 rfd = {version = "0.17.2", optional = true}
 serde = { version = "1.0", features = ["derive"] }

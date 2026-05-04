@@ -53,6 +53,7 @@ pub enum Message {
     Tick,
     Pause,
     TimeRange(String),
+    BumpTime(bool),
     PlotChanged((usize, String)),
     RegrensChanged(String),
     ThemeChanged(iced::theme::Mode),
@@ -150,6 +151,15 @@ impl PlotWindow {
                     args_lock.setup_aux_outputs();
                 }
             }
+            Message::BumpTime(up) => {
+                if up {
+                    self.x_window = self.x_window + 1000.0;
+                } else if self.x_window > 1100.0 {
+                    // Minimum time is 100 msec I guess
+                    self.x_window = self.x_window - 1000.0;
+                }
+                self.time_range_text = self.x_window.to_string();
+            }
             Message::Nothing => {}
             _ => {}
         }
@@ -165,6 +175,18 @@ impl PlotWindow {
                 key: keyboard::Key::Named(keyboard::key::Named::Space),
                 ..
             } => Message::Pause,
+            keyboard::Event::KeyPressed {
+                key: keyboard::Key::Named(keyboard::key::Named::Pause),
+                ..
+            } => Message::Pause,
+            keyboard::Event::KeyPressed {
+                key: keyboard::Key::Named(keyboard::key::Named::ArrowUp),
+                ..
+            } => Message::BumpTime(true),
+            keyboard::Event::KeyPressed {
+                key: keyboard::Key::Named(keyboard::key::Named::ArrowDown),
+                ..
+            } => Message::BumpTime(false),
             _ => Message::Nothing,
         });
 

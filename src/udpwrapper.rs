@@ -1,8 +1,8 @@
 use bytemuck::{Pod, Zeroable};
-use std::{net::Ipv4Addr, net::SocketAddr, str::FromStr};
+use socket2::{Domain, Protocol, Socket, Type};
+use std::net::SocketAddr;
 use tokio::net::UdpSocket;
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::{Duration, timeout};
 
 #[repr(C)]
@@ -24,24 +24,25 @@ pub struct UdpWrapper {
 impl UdpWrapper {
     pub async fn new(addr: &str) -> Self {
         println!("Trying to connect to UDP");
-        let remote = SocketAddr::from_str(addr).unwrap();
-        let socket = UdpSocket::bind(SocketAddr::new(
-            std::net::IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
-            remote.port(),
-        ))
-        .await
-        .unwrap_or(
-            // This happens in loopback testing...
-            UdpSocket::bind(SocketAddr::new(
-                std::net::IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
-                remote.port() + 1,
-            ))
-            .await
-            .unwrap(),
-        );
+        //let remote = SocketAddr::from_str(addr).unwrap();
+        // let socket = UdpSocket::bind(SocketAddr::new(
+        //     std::net::IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+        //     remote.port(),
+        // ))
+        // .await
+        // .unwrap();
+
+        let socket_proto = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)).unwrap();
+        #[cfg(not(windows))]
+        socket_proto.set_reuse_address(true).unwrap();
+        socket_proto.set_reuse_port(true).unwrap();
+        let local_addr: SocketAddr = "0.0.0.0:1534".parse().unwrap();
+        socket_proto.bind(&local_addr.into()).unwrap();
+
+        let std_sock: std::net::UdpSocket = socket_proto.into();
+        let socket: UdpSocket = tokio::net::UdpSocket::from_std(std_sock).unwrap();
 
         socket.connect(addr).await.unwrap();
-
         socket.send("Please connecto bro".as_bytes()).await.unwrap();
         println!("Connected to UDP");
 
@@ -53,10 +54,10 @@ impl UdpWrapper {
         }
     }
 
-    pub async fn parse(&mut self) -> Result<(), std::io::Error> {
+    pub async fn parse(&mut self) -> Result<Vec<u8>, std::io::Error> {
         let mut buffer = vec![0u8; std::mem::size_of::<CanFrame>()];
 
-        let mut n = 0;
+        let mut n;
         loop {
             match timeout(Duration::from_secs(1), self.socket.recv(&mut buffer)).await {
                 Ok(read_result) => {
@@ -87,7 +88,7 @@ impl UdpWrapper {
         self.timestamp = frame.timestamp;
         self.id = frame.id;
         self.data = frame.data;
-        Ok(())
+        Ok(buffer)
     }
 
     pub fn get_timestamp(&self) -> f64 {

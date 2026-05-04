@@ -1,0 +1,11 @@
+dbcfile = "fs.dbc"
+input = "vcan0"
+output = ""
+candatainput = "Socket"
+cache_ms = 0.0
+aux_outputs = ["SME_THROTL_MBB_Alive"]
+plots = [["SME_THROTL_MBB_Alive"]]
+regrens = []
+regrens_raw = ""
+en_ipm = false
+en_aux = true

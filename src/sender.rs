@@ -21,7 +21,7 @@ struct CanFrame {
 
 enum NetworkServer {
     Tcp(TcpListener),
-    Udp(UdpListener), // just hold the bind address; we'll build our own UdpSocket
+    Udp(UdpListener),
 }
 
 #[tokio::main]
@@ -98,7 +98,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
 
         NetworkServer::Udp(listener) => loop {
-            let (mut socket, mut addr): (UdpStream, _) = listener.accept().await.unwrap();
+            let (mut socket, addr): (UdpStream, _) = listener.accept().await.unwrap();
             let mut rx = tx.subscribe();
             println!("New UDP client at {}", addr);
             tokio::spawn(async move {

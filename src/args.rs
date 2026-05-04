@@ -88,6 +88,8 @@ Options:                        If no options, use file picker for config.
                                 which is the default of `candump -L`.
     [--stdin | -t]              Sets STDIN mode with candump format
     [--tcp ip:port]             Sets TCP client mode and server address.
+    [--socket | -s can0]        Uses a socketcan interface for input,
+                                only available if compiled with option.
   Output Options:
     [--output | -o f.parquet]   Enables output to provided parquet file.
     [--cache_ms | -c n]         Sets minimum time between rows. n is integer.
@@ -104,6 +106,13 @@ Options:                        If no options, use file picker for config.
     [--emit-config [file.toml]] Will create a `.toml` file with the full
                                 configuration provided. If you don't provide
                                 a file, the gui file picker will be called.
+    [--config [file.toml]]      Will set all settings to the provided (or chose)
+                                config file, but continue parsing arguments,
+                                so you can ovveride any values in the config
+                                by adding arguments after this. This also sets
+                                the config file path, so --emit-config after this
+                                with no argument WILL OVERWRITE the config file
+                                you passed here.
     ";
 
 pub fn process_args() -> Args {
@@ -199,9 +208,7 @@ pub fn process_args() -> Args {
                 args.regrens_raw = raw_val.clone();
                 args.regrens = parse_regrens(raw_val).unwrap();
             }
-            "--emit-config" => {
-                emit_config = true;
-
+            "--config" => {
                 let mut need_dialogue = true;
 
                 if let Some(next) = argsi.peek() {
@@ -217,14 +224,64 @@ pub fn process_args() -> Args {
                         .add_filter("toml", &["toml"])
                         .set_title("Choose Config File")
                         .set_file_name("Cantelope_Config.toml")
-                        .save_file();
+                        .pick_file();
+                    emit_config_path = files
+                        .as_ref()
+                        .unwrap()
+                        .as_path()
+                        .to_str()
+                        .unwrap()
+                        .to_string();
+
+                    let mut start_args: Args = toml::from_str(
+                        &fs::read_to_string(
+                            files
+                                .expect("File picking failed")
+                                .as_path()
+                                .to_str()
+                                .expect("Config path UTF-8 check failed?"),
+                        )
+                        .expect("Could not read file"),
+                    )
+                    .expect("Could not parse toml config file. Check formatting.");
+                    start_args.setup_aux_outputs();
+                    args = start_args;
+                } else {
+                    let mut start_args: Args = toml::from_str(
+                        &fs::read_to_string(&emit_config_path).expect("Could not read file."),
+                    )
+                    .expect("Could not parse toml config file. Check formatting.");
+                    start_args.setup_aux_outputs();
+                    args = start_args;
+                }
+            }
+            "--emit-config" => {
+                emit_config = true;
+
+                let mut need_dialogue = true;
+
+                if let Some(next) = argsi.peek() {
+                    if !next.starts_with('-') {
+                        let value = argsi.next().unwrap();
+                        emit_config_path = value;
+                        need_dialogue = false;
+                    }
+                } else if emit_config_path.len() > 0 {
+                    need_dialogue = false;
+                }
+
+                if need_dialogue {
+                    let files = FileDialog::new()
+                        .add_filter("toml", &["toml"])
+                        .set_title("Choose Config File")
+                        .pick_file();
                     emit_config_path = files.unwrap().as_path().to_str().unwrap().to_string();
                 }
             }
 
             "--help" | "-h" => {
                 println!("{}", HELP_MSG);
-                panic!();
+                std::process::exit(0);
             }
 
             _ => {

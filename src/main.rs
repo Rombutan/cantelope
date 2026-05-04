@@ -1,7 +1,6 @@
 // DBC Parsing
 use dbc_rs::Dbc;
-use iced::exit;
-use std::{fs, string};
+use std::fs;
 
 // Arrow IP elements
 use arrow::datatypes::{DataType, Field, Schema};
@@ -141,8 +140,8 @@ fn main() {
         _ = PlotWindow::run(rx, args);
     }
 
-    // Always wait for data_loop to finish, whether plot ran or not
-    _ = handle.join();
+    #[cfg(not(feature = "end_data_on_close"))]
+    let _ = handle.join();
 }
 
 async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: SyncSender<DataPoint>) {
@@ -322,7 +321,7 @@ async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: Sync
         }
         #[cfg(feature = "socket")]
         InputSource::Can(ref mut socketwrapper) => {
-            socketwrapper.parse();
+            socketwrapper.parse().unwrap();
             time_start = socketwrapper.get_timestamp();
         }
         InputSource::Tcp(ref mut networkwrapper) => {
@@ -379,7 +378,7 @@ async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: Sync
             }
             #[cfg(feature = "socket")]
             InputSource::Can(ref mut socketwrapper) => {
-                socketwrapper.parse();
+                socketwrapper.parse().unwrap();
                 timestamp = socketwrapper.get_timestamp();
                 id = socketwrapper.get_id();
                 data = socketwrapper.get_data();

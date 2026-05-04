@@ -34,7 +34,7 @@ impl TcpWrapper {
     }
 
     /// Reads the next 24-byte frame from the network and updates internal state
-    pub fn parse(&mut self) -> Result<(), std::io::Error> {
+    pub fn parse(&mut self) -> Result<Vec<u8>, std::io::Error> {
         let mut buffer = [0u8; std::mem::size_of::<CanFrame>()];
 
         // Read exactly 24 bytes
@@ -48,7 +48,7 @@ impl TcpWrapper {
         self.id = frame.id;
         self.data = frame.data;
 
-        Ok(())
+        Ok(Vec::from(buffer))
     }
 
     pub fn get_timestamp(&self) -> f64 {
