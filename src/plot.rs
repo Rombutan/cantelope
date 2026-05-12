@@ -8,8 +8,9 @@ use iced_aw::menu::Menu;
 use iced_aw::{menu_bar, menu_items};
 
 use iced::widget::{container, text};
+use plotters::chart::SeriesLabelStyle;
 use plotters::prelude::*;
-use plotters::style::Color;
+use plotters::style::{Color, SizeDesc};
 use plotters_iced2::{Chart, ChartBuilder, ChartWidget};
 use std::collections::hash_map::DefaultHasher;
 use std::fmt::Write;
@@ -197,6 +198,7 @@ impl PlotWindow {
         use iced::widget::row;
         let args_gaurd = self.args.read().unwrap();
 
+        #[cfg(not(feature = "no_control_row"))]
         let menu_tpl = |items| {
             Menu::new(items)
                 .width(Length::Fill)
@@ -206,6 +208,7 @@ impl PlotWindow {
                 .padding(10.0)
         };
 
+        #[cfg(not(feature = "no_control_row"))]
         let regren_menu = menu_tpl(menu_items!(
             (
                 // Single widget inside the menu
@@ -214,8 +217,10 @@ impl PlotWindow {
             )
         ));
 
+        #[cfg(not(feature = "no_control_row"))]
         let regren_dropdown = menu_bar!((button("Re(d)Gre(e)ns"), regren_menu));
 
+        #[cfg(not(feature = "no_control_row"))]
         let controls = Row::new()
             .spacing(10)
             .padding(10)
@@ -263,11 +268,20 @@ impl PlotWindow {
             })
             .collect();
 
+        #[cfg(not(feature = "no_control_row"))]
         let content = Column::new()
             .spacing(5) // Optional: adds a gap between your charts
             .width(Length::Fill)
             .height(Length::Fill)
             .push(controls)
+            .push(status_row)
+            .push(Column::with_children(charts).spacing(5));
+
+        #[cfg(feature = "no_control_row")]
+        let content = Column::new()
+            .spacing(1)
+            .width(Length::Fill)
+            .height(Length::Fill)
             .push(status_row)
             .push(Column::with_children(charts).spacing(5));
 
@@ -331,8 +345,8 @@ impl<'a> Chart<Message> for SignalChart<'a> {
         }
 
         let chart = builder
-            .margin(2)
-            .x_label_area_size(40)
+            .margin(5)
+            .x_label_area_size(30)
             .y_label_area_size(60);
 
         let mut chart = chart
@@ -343,7 +357,10 @@ impl<'a> Chart<Message> for SignalChart<'a> {
 
         chart
             .configure_mesh()
-            .label_style(("sans-serif", 12).into_font().color(&text_color))
+            .bold_line_style(&text_color.mix(0.4))
+            .set_all_tick_mark_size(-3)
+            .max_light_lines(0)
+            .label_style(("sans-serif", 11).into_font().color(&text_color))
             .axis_style(&text_color)
             .draw()
             .unwrap();
@@ -406,7 +423,14 @@ impl<'a> Chart<Message> for SignalChart<'a> {
                 }
 
                 let mut series_name = name.clone().to_string();
-                write!(series_name, ": {:.1}hz", 1000.0 / (tengap / 100.0)).unwrap();
+                write!(
+                    series_name,
+                    // Plotters computes the size of the background
+                    // rectangle to draw behind the legend incorrectly, so...
+                    ": {:.1}hz              ",
+                    1000.0 / (tengap / 100.0)
+                )
+                .unwrap();
                 chart
                     .draw_series(LineSeries::new(cur_seg.clone(), style))
                     .unwrap()
@@ -418,9 +442,16 @@ impl<'a> Chart<Message> for SignalChart<'a> {
         chart
             .configure_series_labels()
             .position(SeriesLabelPosition::UpperLeft) // This moves it to the top left
-            .background_style(&TRANSPARENT)
+            .background_style(
+                RGBColor(
+                    255 - &text_color.rgb().0,
+                    255 - &text_color.rgb().1,
+                    255 - &text_color.rgb().2,
+                )
+                .mix(0.4),
+            )
             .border_style(&TRANSPARENT)
-            .label_font(("sans-serif", 13).into_font().color(&text_color))
+            .label_font(("sans-serif", 12).into_font().color(&text_color))
             .draw()
             .unwrap();
     }

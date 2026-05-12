@@ -274,7 +274,7 @@ pub fn process_args() -> Args {
                     let files = FileDialog::new()
                         .add_filter("toml", &["toml"])
                         .set_title("Choose Config File")
-                        .pick_file();
+                        .save_file();
                     emit_config_path = files.unwrap().as_path().to_str().unwrap().to_string();
                 }
             }
