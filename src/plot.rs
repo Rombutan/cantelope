@@ -8,9 +8,8 @@ use iced_aw::menu::Menu;
 use iced_aw::{menu_bar, menu_items};
 
 use iced::widget::{container, text};
-use plotters::chart::SeriesLabelStyle;
 use plotters::prelude::*;
-use plotters::style::{Color, SizeDesc};
+use plotters::style::Color;
 use plotters_iced2::{Chart, ChartBuilder, ChartWidget};
 use std::collections::hash_map::DefaultHasher;
 use std::fmt::Write;

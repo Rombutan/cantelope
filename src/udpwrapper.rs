@@ -35,6 +35,7 @@ impl UdpWrapper {
         let socket_proto = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)).unwrap();
         #[cfg(not(windows))]
         socket_proto.set_reuse_address(true).unwrap();
+        #[cfg(not(windows))]
         socket_proto.set_reuse_port(true).unwrap();
         let local_addr: SocketAddr = "0.0.0.0:1534".parse().unwrap();
         socket_proto.bind(&local_addr.into()).unwrap();
