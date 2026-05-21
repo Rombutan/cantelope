@@ -29,40 +29,63 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     if args.len() != 4 {
         eprintln!(
-            "Usage: {} <can_interface> -t|-u <local_listen_port>",
+            "Usage: {} <can_interfaces_comma_separated> -t|-u <local_listen_port>",
             args[0]
         );
         return Ok(());
     }
 
-    let can_interface = args[1].clone();
+    // Split the comma-separated string into individual interface names
+    let can_interfaces: Vec<String> = args[1]
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if can_interfaces.is_empty() {
+        eprintln!("Error: No valid CAN interfaces provided.");
+        return Ok(());
+    }
+
     let netmode = args[2].clone();
     let local_port = format!("0.0.0.0:{}", args[3]);
 
     // 2. Broadcast channel for CanFrame
     let (tx, _) = broadcast::channel::<CanFrame>(100);
 
-    // 3. CAN polling task
-    let tx_can = tx.clone();
-    tokio::task::spawn_blocking(move || {
-        let mut cansocket = socketwrap::CanWrapper::new(&can_interface).unwrap();
-        println!("Polling CAN: {}", can_interface);
-        loop {
-            if let Err(e) = cansocket.parse() {
-                eprintln!("CAN parse error: {}", e);
-                continue;
-            }
-            let frame = CanFrame {
-                timestamp: cansocket.get_timestamp(),
-                id: cansocket.get_id(),
-                _pad: 0,
-                data: cansocket.get_data(),
+    // 3. Spawn a polling task for EACH specified CAN interface
+    for can_interface in can_interfaces {
+        let tx_can = tx.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut cansocket = match socketwrap::CanWrapper::new(&can_interface) {
+                Ok(socket) => socket,
+                Err(e) => {
+                    eprintln!(
+                        "Failed to initialize CAN interface {}: {}",
+                        can_interface, e
+                    );
+                    return;
+                }
             };
-            if tx_can.receiver_count() > 0 {
-                let _ = tx_can.send(frame);
+
+            println!("Polling CAN: {}", can_interface);
+            loop {
+                if let Err(e) = cansocket.parse() {
+                    eprintln!("CAN ({}) parse error: {}", can_interface, e);
+                    continue;
+                }
+                let frame = CanFrame {
+                    timestamp: cansocket.get_timestamp(),
+                    id: cansocket.get_id(),
+                    _pad: 0,
+                    data: cansocket.get_data(),
+                };
+                if tx_can.receiver_count() > 0 {
+                    let _ = tx_can.send(frame);
+                }
             }
-        }
-    });
+        });
+    }
 
     // 4. Server task
     let server_enum = match netmode.as_str() {
