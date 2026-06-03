@@ -26,6 +26,7 @@ pub struct Args {
     pub regrens_raw: String,
     pub en_ipm: bool,
     pub en_aux: bool,
+    pub python: String,
 }
 
 impl Args {
@@ -90,6 +91,10 @@ Options:                        If no options, use file picker for config.
     [--tcp ip:port]             Sets TCP client mode and server address.
     [--socket | -s can0]        Uses a socketcan interface for input,
                                 only available if compiled with option.
+  Python:
+    [--python file.py]          Will instantiate and execute a class from
+                                that file on each row, and make that output
+                                available to plotting subsystem.
   Output Options:
     [--output | -o f.parquet]   Enables output to provided parquet file.
     [--cache_ms | -c n]         Sets minimum time between rows. n is integer.
@@ -177,7 +182,7 @@ pub fn process_args() -> Args {
                     .unwrap()
             }
 
-            "--cache-ms" | "-c" => {
+            "--cache_ms" | "-c" => {
                 args.cache_ms = argsi
                     .next()
                     .expect("--cache-ms requires a value")
@@ -192,6 +197,14 @@ pub fn process_args() -> Args {
                     .parse()
                     .unwrap();
                 args.en_ipm = true;
+            }
+
+            "--python" => {
+                args.python = argsi
+                    .next()
+                    .expect("--output requires a value")
+                    .parse()
+                    .unwrap();
             }
 
             "--plot" | "-p" => {

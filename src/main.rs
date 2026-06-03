@@ -27,6 +27,13 @@ pub mod udpwrapper;
 use crate::args::Args;
 use crate::args::CanDataInput;
 
+// Pyo3
+use pyo3::{
+    prelude::*,
+    types::{PyAnyMethods, PyModule, PyTuple},
+};
+use std::ffi::CString;
+
 // SocketCAN
 #[cfg(feature = "socket")]
 pub mod socketwrap;
@@ -200,6 +207,8 @@ async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: Sync
     let mut columns: Vec<GenericColumn> = Vec::new(); // This vec actually stores the values
     let mut is_filled: Vec<bool> = Vec::new(); // This will keep track of which values have been filled so ones which haven't can be null balanced
 
+    let mut column_names = vec!["Time_ms"];
+
     fields.push(Field::new(
         "Time_ms",
         DataType::Float64,
@@ -213,6 +222,7 @@ async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: Sync
     for message in dbc.messages().iter() {
         for signal in message.signals().iter() {
             is_filled.push(false); // If I ever update this to exclude ANY signals which are present in the DBC, I will need to move this into the blocks below
+            column_names.push(signal.name());
             if signal.length() == 1
                 && signal.is_unsigned()
                 && signal.factor().is_nearly(1.0)
@@ -269,6 +279,50 @@ async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: Sync
         }
     }
     println!("\nBasis row size: {} bits", base_row_size);
+
+    Python::initialize();
+    let mut python_string: Vec<String> = vec![];
+    let mut python_object: Option<Py<PyAny>> = None;
+    let python = &args.read().unwrap().python.clone();
+    if python.contains(".py") {
+        let python_code = fs::read_to_string(python).expect("Failed to read Python file from disk");
+
+        // Convert the dynamic code string into a C-compatible string slice
+        let py_code_c = CString::new(python_code).unwrap();
+        let pyfile = CString::new(python.as_str()).unwrap();
+        let pymod = CString::new(python.replace(".py", "")).unwrap();
+
+        Python::attach(|py| {
+            // Compile the dynamic string into an in-memory module
+            let module = PyModule::from_code(py, &py_code_c, &pyfile, &pymod)?;
+
+            // Find the class inside the module
+            match module.getattr("CantelopeExtension") {
+                Ok(class_obj) => {
+                    let factory_result =
+                        class_obj.call_method1("create_and_initialize", (column_names,))?;
+                    let tuple_result = factory_result.downcast::<PyTuple>()?;
+
+                    let instance = tuple_result.get_item(0)?;
+                    python_object = Some(instance.unbind());
+
+                    python_string = tuple_result.get_item(1).unwrap().extract()?;
+                }
+                Err(e) => {
+                    // This will print the exact Python stack trace/error type (e.g., AttributeError)
+                    eprintln!("Failed to get CantelopeExtension: {:?}", e);
+
+                    // Let's also print everything that IS available in the module to debug
+                    if let Ok(dir) = module.dir() {
+                        println!("Available attributes in module: {:?}", dir);
+                    }
+                }
+            }
+            Ok::<(), PyErr>(())
+        })
+        .unwrap();
+    }
+
     let schema = Arc::new(Schema::new(fields));
 
     let mut input: InputSource;
@@ -348,8 +402,10 @@ async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: Sync
     })
     .expect("Error setting Ctrl-C handler");
 
-    let mut num_chunks = 0;
+    let mut num_chunks = 1;
     while !exit.load(Ordering::SeqCst) {
+        let mut python_inputs: Vec<Option<f64>> = vec![None; python_string.len()];
+
         // Message recieve loop
         let timestamp;
         let id;
@@ -419,6 +475,13 @@ async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: Sync
                             is_filled[schema.index_of(signal.name).unwrap()] = true;
                         }
 
+                        if python_string.iter().any(|s| s == &signal.name) {
+                            python_inputs[(python_string
+                                .iter()
+                                .position(|x| x == &signal.name.to_string()))
+                            .unwrap()] = Some(signal.value);
+                        }
+
                         if args
                             .read()
                             .unwrap()
@@ -438,9 +501,41 @@ async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: Sync
             Err(e) => println!("Signal: {} Data: {:02x?}  Error: {}", id, &data, e),
             //Err(e) => _ = e,
         }
+
         if relative_time_rcv > (&args.read().unwrap().cache_ms * f64::from(num_chunks))
             || exit.load(Ordering::SeqCst)
         {
+            if let Some(ref py_obj) = python_object {
+                let mut python_outputs: Vec<(String, f64)> = vec![];
+                Python::attach(|py| {
+                    // Re-bind the object to the current GIL context
+                    let bound_obj = py_obj.bind(py);
+
+                    // Execute the method on the instance
+                    let py_result = bound_obj.call_method1("process_numbers", (python_inputs,))?;
+
+                    // Extract the result back into native Rust types
+                    python_outputs = py_result.extract()?;
+
+                    Ok::<(), PyErr>(())
+                })
+                .unwrap();
+
+                for value in python_outputs {
+                    if args
+                        .read()
+                        .unwrap()
+                        .aux_outputs
+                        .iter()
+                        .any(|s| s == &value.0)
+                    {
+                        let _ = tx.try_send((value.0.to_string(), relative_time_rcv, value.1));
+                    }
+                }
+            }
+
+            num_chunks += 1;
+
             if args.read().unwrap().en_ipm {
                 let col = &mut columns[schema.index_of("Time_ms").unwrap()];
                 is_filled[schema.index_of("Time_ms").unwrap()] = true;
@@ -448,7 +543,6 @@ async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: Sync
                     GenericColumn::F64(c) => c.push(Some(relative_time_rcv)),
                     _ => {}
                 }
-                num_chunks += 1;
 
                 for (index, value) in is_filled.iter().enumerate() {
                     if !value {

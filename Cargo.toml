@@ -38,6 +38,8 @@ rfd = {version = "0.17.2", optional = true}
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.9"
 itertools = "0.14.0"
+pyo3 = { version = "0.28", features = ["auto-initialize"] }
+ffi = "0.1.1"
 
 [profile.release]
 opt-level = 3
