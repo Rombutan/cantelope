@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["plot", "not_wasm", "socket"]
+default = ["plot", "not_wasm"]
 socket = ["dep:socketcan"]
 plot = ["dep:plotters-iced2", "dep:plotters", "dep:iced", "dep:iced_aw", "dep:rfd"]
 not_wasm = ["dep:ctrlc"]
