@@ -1,19 +1,19 @@
 use socketcan::{CanFrame, CanSocket, EmbeddedFrame, ExtendedId, Frame, Id, Socket, StandardId};
 
-pub struct CanWrapper {
+pub struct CanOutWrapper {
     socket: CanSocket,
 }
 
-impl CanWrapper {
+impl CanOutWrapper {
     /// Opens a new CAN socket in blocking mode.
     pub fn new(interface: &str) -> Result<Self, socketcan::CanError> {
-        let socket = CanSocket::open(interface)?;
+        let socket = CanSocket::open(interface).unwrap();
         Ok(Self { socket })
     }
 
     /// Sends a CAN frame with either a standard (11-bit)
     /// or extended (29-bit) identifier.
-    pub fn send(&mut self, id: u32, data: &[u8]) -> Result<(), socketcan::CanError> {
+    pub fn send(&mut self, id: u32, data: &[u8]) -> Result<(), std::io::Error> {
         let id = if id <= 0x7FF {
             Id::Standard(StandardId::new(id as u16).expect("invalid standard CAN ID"))
         } else {

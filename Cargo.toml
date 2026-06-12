@@ -4,13 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["plot", "not_wasm"]
+default = ["plot", "not_wasm", "socket"]
 socket = ["dep:socketcan"]
 plot = ["dep:plotters-iced2", "dep:plotters", "dep:iced", "dep:iced_aw", "dep:rfd"]
 not_wasm = ["dep:ctrlc"]
 wasm = ["dep:iced_web"]
 end_data_on_close = []
 no_control_row = []
+python = ["dep:pyo3"]
 
 [dependencies]
 socketcan = { version = '3.5.0', optional = true }
@@ -38,7 +39,7 @@ rfd = {version = "0.17.2", optional = true}
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.9"
 itertools = "0.14.0"
-pyo3 = { version = "0.28", features = ["auto-initialize"] }
+pyo3 = { version = "0.28", features = ["auto-initialize"], optional = true }
 ffi = "0.1.1"
 
 [profile.release]

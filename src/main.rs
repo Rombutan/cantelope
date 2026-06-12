@@ -28,6 +28,7 @@ use crate::args::Args;
 use crate::args::CanDataInput;
 
 // Pyo3
+#[cfg(feature = "python")]
 use pyo3::{
     prelude::*,
     types::{PyAnyMethods, PyModule, PyTuple},
@@ -40,6 +41,9 @@ pub mod socketwrap;
 
 #[cfg(feature = "socket")]
 pub mod socketout;
+
+#[cfg(feature = "socket")]
+use socketout::CanOutWrapper;
 
 // Use ctrl+c as exit signal in stdin and socket mode
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -283,47 +287,51 @@ async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: Sync
     }
     println!("\nBasis row size: {} bits", base_row_size);
 
-    Python::initialize();
-    let mut python_string: Vec<String> = vec![];
-    let mut python_object: Option<Py<PyAny>> = None;
-    let python = &args.read().unwrap().python.clone();
-    if python.contains(".py") {
-        let python_code = fs::read_to_string(python).expect("Failed to read Python file from disk");
+    #[cfg(feature = "python")]
+    {
+        Python::initialize();
+        let mut python_string: Vec<String> = vec![];
+        let mut python_object: Option<Py<PyAny>> = None;
+        let python = &args.read().unwrap().python.clone();
+        if python.contains(".py") {
+            let python_code =
+                fs::read_to_string(python).expect("Failed to read Python file from disk");
 
-        // Convert the dynamic code string into a C-compatible string slice
-        let py_code_c = CString::new(python_code).unwrap();
-        let pyfile = CString::new(python.as_str()).unwrap();
-        let pymod = CString::new(python.replace(".py", "")).unwrap();
+            // Convert the dynamic code string into a C-compatible string slice
+            let py_code_c = CString::new(python_code).unwrap();
+            let pyfile = CString::new(python.as_str()).unwrap();
+            let pymod = CString::new(python.replace(".py", "")).unwrap();
 
-        Python::attach(|py| {
-            // Compile the dynamic string into an in-memory module
-            let module = PyModule::from_code(py, &py_code_c, &pyfile, &pymod)?;
+            Python::attach(|py| {
+                // Compile the dynamic string into an in-memory module
+                let module = PyModule::from_code(py, &py_code_c, &pyfile, &pymod)?;
 
-            // Find the class inside the module
-            match module.getattr("CantelopeExtension") {
-                Ok(class_obj) => {
-                    let factory_result =
-                        class_obj.call_method1("create_and_initialize", (column_names,))?;
-                    let tuple_result = factory_result.downcast::<PyTuple>()?;
+                // Find the class inside the module
+                match module.getattr("CantelopeExtension") {
+                    Ok(class_obj) => {
+                        let factory_result =
+                            class_obj.call_method1("create_and_initialize", (column_names,))?;
+                        let tuple_result = factory_result.downcast::<PyTuple>()?;
 
-                    let instance = tuple_result.get_item(0)?;
-                    python_object = Some(instance.unbind());
+                        let instance = tuple_result.get_item(0)?;
+                        python_object = Some(instance.unbind());
 
-                    python_string = tuple_result.get_item(1).unwrap().extract()?;
-                }
-                Err(e) => {
-                    // This will print the exact Python stack trace/error type (e.g., AttributeError)
-                    eprintln!("Failed to get CantelopeExtension: {:?}", e);
+                        python_string = tuple_result.get_item(1).unwrap().extract()?;
+                    }
+                    Err(e) => {
+                        // This will print the exact Python stack trace/error type (e.g., AttributeError)
+                        eprintln!("Failed to get CantelopeExtension: {:?}", e);
 
-                    // Let's also print everything that IS available in the module to debug
-                    if let Ok(dir) = module.dir() {
-                        println!("Available attributes in module: {:?}", dir);
+                        // Let's also print everything that IS available in the module to debug
+                        if let Ok(dir) = module.dir() {
+                            println!("Available attributes in module: {:?}", dir);
+                        }
                     }
                 }
-            }
-            Ok::<(), PyErr>(())
-        })
-        .unwrap();
+                Ok::<(), PyErr>(())
+            })
+            .unwrap();
+        }
     }
 
     let schema = Arc::new(Schema::new(fields));
@@ -357,6 +365,23 @@ async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: Sync
             input = InputSource::Udp(udpwrapper::UdpWrapper::new(&addr).await);
         }
     }
+
+    #[cfg(feature = "socket")]
+    let mut outsocket: CanOutWrapper;
+    let use_outsocket: bool;
+
+    #[cfg(feature = "socket")]
+    let use_outsocket = !args.read().unwrap().socketout.is_empty();
+
+    #[cfg(feature = "socket")]
+    let mut outsocket = if use_outsocket {
+        Some(
+            CanOutWrapper::new(&args.read().unwrap().socketout)
+                .expect("Failed to open output CAN Socket?\n"),
+        )
+    } else {
+        None
+    };
 
     let time_start;
     match input {
@@ -407,7 +432,10 @@ async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: Sync
 
     let mut num_chunks = 1;
     while !exit.load(Ordering::SeqCst) {
+        #[cfg(feature = "python")]
         let mut python_inputs: Vec<Option<f64>> = vec![None; python_string.len()];
+
+        let mut offset: f64 = 0.0;
 
         // Message recieve loop
         let timestamp;
@@ -458,6 +486,15 @@ async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: Sync
             }
         }
 
+        #[cfg(feature = "socket")]
+        {
+            if use_outsocket {
+                if let Some(ref mut socket) = outsocket {
+                    socket.send(id, &data);
+                }
+            }
+        }
+
         let relative_time_rcv = (timestamp - time_start) * 1000.0; // time since start of recording
 
         match dbc.decode(id, &data, false) {
@@ -480,6 +517,7 @@ async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: Sync
                             is_filled[schema.index_of(signal.name).unwrap()] = true;
                         }
 
+                        #[cfg(feature = "python")]
                         if python_string.iter().any(|s| s == &signal.name) {
                             python_inputs[(python_string
                                 .iter()
@@ -507,34 +545,46 @@ async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: Sync
             //Err(e) => _ = e,
         }
 
-        if relative_time_rcv > (&args.read().unwrap().cache_ms * f64::from(num_chunks))
+        if relative_time_rcv > (&args.read().unwrap().cache_ms * f64::from(num_chunks) + offset)
             || exit.load(Ordering::SeqCst)
         {
-            if let Some(ref py_obj) = python_object {
-                let mut python_outputs: Vec<(String, f64)> = vec![];
-                Python::attach(|py| {
-                    // Re-bind the object to the current GIL context
-                    let bound_obj = py_obj.bind(py);
+            if ((&args.read().unwrap().cache_ms * f64::from(num_chunks) + offset)
+                - relative_time_rcv)
+                > 2.0 * &args.read().unwrap().cache_ms
+            {
+                offset += ((&args.read().unwrap().cache_ms * f64::from(num_chunks) + offset)
+                    - relative_time_rcv);
+            }
 
-                    // Execute the method on the instance
-                    let py_result = bound_obj.call_method1("process_numbers", (python_inputs,))?;
+            #[cfg(feature = "python")]
+            {
+                if let Some(ref py_obj) = python_object {
+                    let mut python_outputs: Vec<(String, f64)> = vec![];
+                    Python::attach(|py| {
+                        // Re-bind the object to the current GIL context
+                        let bound_obj = py_obj.bind(py);
 
-                    // Extract the result back into native Rust types
-                    python_outputs = py_result.extract()?;
+                        // Execute the method on the instance
+                        let py_result =
+                            bound_obj.call_method1("process_numbers", (python_inputs,))?;
 
-                    Ok::<(), PyErr>(())
-                })
-                .unwrap();
+                        // Extract the result back into native Rust types
+                        python_outputs = py_result.extract()?;
 
-                for value in python_outputs {
-                    if args
-                        .read()
-                        .unwrap()
-                        .aux_outputs
-                        .iter()
-                        .any(|s| s == &value.0)
-                    {
-                        let _ = tx.try_send((value.0.to_string(), relative_time_rcv, value.1));
+                        Ok::<(), PyErr>(())
+                    })
+                    .unwrap();
+
+                    for value in python_outputs {
+                        if args
+                            .read()
+                            .unwrap()
+                            .aux_outputs
+                            .iter()
+                            .any(|s| s == &value.0)
+                        {
+                            let _ = tx.try_send((value.0.to_string(), relative_time_rcv, value.1));
+                        }
                     }
                 }
             }
