@@ -27,6 +27,7 @@ pub struct Args {
     pub en_ipm: bool,
     pub en_aux: bool,
     pub python: String,
+    pub socketout: String,
 }
 
 impl Args {
@@ -38,6 +39,11 @@ impl Args {
                     self.en_aux = true;
                 }
             }
+        }
+
+        if !self.regrens_raw.is_empty() {
+            self.regrens =
+                parse_regrens(self.regrens_raw.clone()).expect("Could not parse regrens_raw");
         }
 
         for regren in &self.regrens {
@@ -98,6 +104,9 @@ Options:                        If no options, use file picker for config.
   Output Options:
     [--output | -o f.parquet]   Enables output to provided parquet file.
     [--cache_ms | -c n]         Sets minimum time between rows. n is integer.
+    [--socketout socket]        Enabled immediate output of all recieved frames
+                                on provided socketcan interface. No windows.
+
   Plotting / GUI Options:
     [--plot.. | -p.. SIG1,SIG2] Enables plotting and adds a plot to the window
                                 You can add as many plots as you can fit and
@@ -156,7 +165,21 @@ pub fn process_args() -> Args {
             }
 
             #[cfg(not(feature = "socket"))]
-            "--socket" | "-s" => {
+            "--socket" => {
+                panic!("Socketcan feature disabled!")
+            }
+
+            #[cfg(feature = "socket")]
+            "--socketout" => {
+                args.socketout = argsi
+                    .next()
+                    .expect("--tcp requires a value")
+                    .parse()
+                    .unwrap()
+            }
+
+            #[cfg(not(feature = "socket"))]
+            "--socketout" | "-s" => {
                 panic!("Socketcan feature disabled!")
             }
 
@@ -245,6 +268,11 @@ pub fn process_args() -> Args {
                         .to_str()
                         .unwrap()
                         .to_string();
+
+                    ["TPERIPH_FL_TIRETEMP_1","TPERIPH_FL_TIRETEMP_2","TPERIPH_FL_TIRETEMP_3","TPERIPH_FL_TIRETEMP_4","TPERIPH_FL_TIRETEMP_5","TPERIPH_FL_TIRETEMP_6","TPERIPH_FL_TIRETEMP_7","TPERIPH_FL_TIRETEMP_8"],
+                    ["TPERIPH_FR_TIRETEMP_1","TPERIPH_FR_TIRETEMP_2","TPERIPH_FR_TIRETEMP_3","TPERIPH_FR_TIRETEMP_4","TPERIPH_FR_TIRETEMP_5","TPERIPH_FR_TIRETEMP_6","TPERIPH_FR_TIRETEMP_7","TPERIPH_FR_TIRETEMP_8"],
+                    ["TPERIPH_BL_TIRETEMP_1","TPERIPH_BL_TIRETEMP_2","TPERIPH_BL_TIRETEMP_3","TPERIPH_BL_TIRETEMP_4","TPERIPH_BL_TIRETEMP_5","TPERIPH_BL_TIRETEMP_6","TPERIPH_BL_TIRETEMP_7","TPERIPH_BL_TIRETEMP_8"],
+                    ["TPERIPH_BR_TIRETEMP_1","TPERIPH_BR_TIRETEMP_2","TPERIPH_BR_TIRETEMP_3","TPERIPH_BR_TIRETEMP_4","TPERIPH_BR_TIRETEMP_5","TPERIPH_BR_TIRETEMP_6","TPERIPH_BR_TIRETEMP_7","TPERIPH_BR_TIRETEMP_8"]
 
                     let mut start_args: Args = toml::from_str(
                         &fs::read_to_string(

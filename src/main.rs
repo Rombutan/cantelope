@@ -38,6 +38,9 @@ use std::ffi::CString;
 #[cfg(feature = "socket")]
 pub mod socketwrap;
 
+#[cfg(feature = "socket")]
+pub mod socketout;
+
 // Use ctrl+c as exit signal in stdin and socket mode
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{process, thread, time};
@@ -413,7 +416,9 @@ async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: Sync
 
         match input {
             InputSource::File(ref mut filestream) => {
-                filestream.parse();
+                if (filestream.parse()) {
+                    exit.store(true, Ordering::SeqCst);
+                }
                 timestamp = filestream.get_timestamp();
                 id = filestream.get_id();
                 data = filestream.get_data();

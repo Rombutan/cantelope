@@ -46,7 +46,7 @@ throttle = 0
 while(True):
     msg = can.Message(
         arbitration_id=646,
-        data=[00,00,50,00,00,00,00,00],
+        data=[100,00,100,00,00,00,00,00],
         is_extended_id=False
     )
     try:
@@ -64,7 +64,7 @@ while(True):
 
     msg = can.Message(
         arbitration_id=390,
-        data=[int(throttle%256),int(throttle/256),76,29,prB,i,00,00],
+        data=[00,00,0x4c,0x1d,0x8,i,00,00],
         is_extended_id=False
     )
     
@@ -73,6 +73,18 @@ while(True):
 
     except can.CanError:
         print("Message NOT sent")
+
+    
+    msg = can.Message(
+        arbitration_id=80,
+        data = 0,
+        is_extended_id = False
+        )
+    try:
+        bus.send(msg);
+    except can.CanError:
+        print("Sync not sent")
+
 
     i = i + 1
     if(i >= 16):

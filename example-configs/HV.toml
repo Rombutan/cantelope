@@ -1,0 +1,14 @@
+dbcfile = "fs.dbc"
+input = "192.168.0.1:1535"
+output = ""
+candatainput = "UdpRemote"
+cache_ms = 0.0
+aux_outputs = []
+plots = [["SME_TEMP_DC_Bus_V","BATT_POWER_PACK_VOLTAGE"],
+    ["BATT_POWER_CURRENT","SME_TEMP_BusCurrent"],
+    ["BATT_POWER_INSTANTANEOUS_POWER"]
+regrens = []
+regrens_raw = "BATT_STATUS_SHUTDOWN_FINAL]0"
+en_ipm = false
+en_aux = true
+python = ""

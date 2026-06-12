@@ -1,0 +1,14 @@
+dbcfile = "fs.dbc"
+input = "192.168.0.1:1535"
+output = ""
+candatainput = "UdpRemote"
+cache_ms = 0.0
+aux_outputs = []
+plots = [["TPERIPH_FL_DATA_WHEELSPEED","TPERIPH_FR_DATA_WHEELSPEED","TPERIPH_BL_DATA_WHEELSPEED","TPERIPH_BR_DATA_WHEELSPEED"],
+    ["TPERIPH_FL_DATA_SUSTRAVEL","TPERIPH_FR_DATA_SUSTRAVEL","TPERIPH_BL_DATA_SUSTRAVEL","TPERIPH_BR_DATA_SUSTRAVEL"],
+    ["VCU_BRAKE_PRESSSURE_FRONT","VCU_BRAKE_PRESSSURE_REAR"]]
+regrens = []
+regrens_raw = ""
+en_ipm = false
+en_aux = true
+python = ""
