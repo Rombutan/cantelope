@@ -473,7 +473,7 @@ async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: Sync
                 data = socketwrapper.get_data();
             }
             InputSource::Tcp(ref mut networkwrapper) => {
-                networkwrapper.parse().unwrap();
+                let _ = networkwrapper.parse();
                 timestamp = networkwrapper.get_timestamp();
                 id = networkwrapper.get_id();
                 data = networkwrapper.get_data();

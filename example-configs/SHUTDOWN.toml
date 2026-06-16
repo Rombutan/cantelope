@@ -4,6 +4,7 @@ output = ""
 candatainput = "UdpRemote"
 cache_ms = 0.0
 aux_outputs = []
+socketout = ""
 plots = [["VCU_BSPD_FAULT", "VCU_BSPD_SHUTDOWN_OUT"]]
 regrens = []
 regrens_raw = "BATT_STATUS_SHUTDOWN_IN]0,BATT_STATUS_SHUTDOWN_OUT]0,BATT_STATUS_SHUTDOWN_FINAL]0"
