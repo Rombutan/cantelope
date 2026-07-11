@@ -53,3 +53,10 @@ Conveniently available is the sender binary which transmits packets in the appro
 - If you're on linux, build with `--features socket` so you can use SocketCan interfaces.
 - Building with `--features end_data_on_close` will make it so that when the main window is closed, the data processing thread exits. This is handy on a telemetry client which isn't being relied on to save the data, so you don't end up with zombie processes.
 - If you wanna cross compile for windows, use cross.
+
+# Features Plot
+- [ ] Refactor to remove rwlocked args struct (removing live plot/regren reconfiguration)
+- [ ] Refactor plotter core to read from column arrays instead of coppying
+- [ ] Improved GUI style and configurability
+- [ ] Generalize input interface from CAN... maintain configurability via TOML files
+- [ ] Configuration helper cli/tui for dashboard setup and input defs
