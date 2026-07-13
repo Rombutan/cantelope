@@ -1,11 +1,10 @@
 use iced::Alignment::Center;
 use iced::{
     Background, Element, Length, Size, Subscription, keyboard, time, widget::Button,
-    widget::Column, widget::Row, widget::Text, widget::button, widget::text_input,
+    widget::Column, widget::Row, widget::Text, widget::text_input,
 };
 
 use iced_aw::menu::Menu;
-use iced_aw::{menu_bar, menu_items};
 
 use iced::widget::{container, text};
 use plotters::prelude::*;
@@ -27,7 +26,6 @@ pub type DataPoint = (String, f64, f64); // (signal, x, y)
 
 use crate::args;
 use args::Args;
-use std::sync::RwLock;
 
 fn int_from_str(name: &str) -> usize {
     let mut hasher = DefaultHasher::new();
@@ -41,7 +39,7 @@ pub struct PlotWindow {
     receiver: Arc<Mutex<Receiver<DataPoint>>>,
     signals: HashMap<String, VecDeque<(f64, f64)>>,
     last_redraw: Instant,
-    args: Arc<RwLock<Args>>,
+    args: Args,
     play: bool,
     time_range_text: String,
     x_window: f64,
@@ -55,14 +53,14 @@ pub enum Message {
     TimeRange(String),
     BumpTime(bool),
     PlotChanged((usize, String)),
-    RegrensChanged(String),
     ThemeChanged(iced::theme::Mode),
     Nothing,
 }
 
 impl PlotWindow {
-    pub fn run(receiver: Receiver<DataPoint>, _args: Arc<RwLock<Args>>) -> iced::Result {
+    pub fn run(receiver: Receiver<DataPoint>, _args: Args) -> iced::Result {
         let receiver = Arc::new(Mutex::new(receiver));
+        let args = _args.clone();
         iced::application(
             {
                 let receiver = Arc::clone(&receiver);
@@ -72,7 +70,7 @@ impl PlotWindow {
                             receiver: Arc::clone(&receiver),
                             signals: HashMap::new(),
                             last_redraw: Instant::now(),
-                            args: Arc::clone(&_args),
+                            args: args.clone(),
                             play: true,
                             time_range_text: String::from("3000"),
                             x_window: 3000.0,
@@ -137,20 +135,6 @@ impl PlotWindow {
             Message::ThemeChanged(mode) => {
                 self.theme_mode = mode;
             }
-            Message::RegrensChanged(raw_value) => {
-                let mut args_lock = self.args.write().unwrap();
-                args_lock.regrens_raw = raw_value.clone();
-
-                if raw_value.len() == 0 {
-                    args_lock.regrens.clear();
-                    args_lock.setup_aux_outputs();
-                }
-
-                if let Ok(val) = args::parse_regrens(raw_value) {
-                    args_lock.regrens = val;
-                    args_lock.setup_aux_outputs();
-                }
-            }
             Message::BumpTime(up) => {
                 if up {
                     self.x_window = self.x_window + 1000.0;
@@ -195,36 +179,12 @@ impl PlotWindow {
 
     fn view(&self) -> Element<'_, Message> {
         use iced::widget::row;
-        let args_gaurd = self.args.read().unwrap();
-
-        #[cfg(not(feature = "no_control_row"))]
-        let menu_tpl = |items| {
-            Menu::new(items)
-                .width(Length::Fill)
-                .offset(0.0)
-                .spacing(10.0)
-                .close_on_item_click(false)
-                .padding(10.0)
-        };
-
-        #[cfg(not(feature = "no_control_row"))]
-        let regren_menu = menu_tpl(menu_items!(
-            (
-                // Single widget inside the menu
-                text_input("Re(d)Gre(e)ns", &self.args.read().unwrap().regrens_raw)
-                    .on_input(Message::RegrensChanged)
-            )
-        ));
-
-        #[cfg(not(feature = "no_control_row"))]
-        let regren_dropdown = menu_bar!((button("Re(d)Gre(e)ns"), regren_menu));
 
         #[cfg(not(feature = "no_control_row"))]
         let controls = Row::new()
             .spacing(10)
             .padding(10)
             .push(Button::new("Pause").on_press(Message::Pause))
-            .push(regren_dropdown)
             .push(Text::new(format!("Period(ms):")).align_y(Center))
             .push(
                 text_input("3000", &self.time_range_text)
@@ -238,7 +198,7 @@ impl PlotWindow {
         };
 
         let status_row =
-            args_gaurd
+            self.args
                 .regrens
                 .iter()
                 .fold(row![].spacing(10).padding(10), |row, tuple| {
@@ -249,8 +209,6 @@ impl PlotWindow {
 
         let charts: Vec<Element<Message>> = self
             .args
-            .read()
-            .unwrap()
             .plots
             .iter()
             .map(|plot_group| {

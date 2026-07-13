@@ -114,14 +114,12 @@ fn main() {
         start_args = args::process_args();
     }
 
-    let args = Arc::new(RwLock::new(start_args)); // Load arguments into a struct
-
-    if args.read().unwrap().dbcfile == "".to_string() {
+    if start_args.dbcfile == "".to_string() {
         let files = FileDialog::new()
             .add_filter("dbc", &["dbc", "DBC"])
             .set_title("Choose DBC File")
             .pick_file();
-        args.write().unwrap().dbcfile = files
+        start_args.dbcfile = files
             .expect("DBF File picker failed")
             .as_path()
             .to_str()
@@ -129,14 +127,15 @@ fn main() {
             .to_string();
     }
 
-    let dbc_content =
-        fs::read_to_string(&args.read().unwrap().dbcfile).expect("Could not read DBC file"); // Load DBC file contents into string
+    let args = start_args;
+
+    let dbc_content = fs::read_to_string(&args.dbcfile).expect("Could not read DBC file"); // Load DBC file contents into string
 
     let (tx, rx) = mpsc::sync_channel::<DataPoint>(100); // For transfers from the data loop thread to main
 
-    let args_en_aux = args.read().unwrap().en_aux;
+    let args_en_aux = args.en_aux;
 
-    let args_data_thread = Arc::clone(&args);
+    let args_data_thread = args.clone();
 
     let handle = std::thread::spawn(move || {
         tokio::runtime::Builder::new_multi_thread()
@@ -158,7 +157,7 @@ fn main() {
     let _ = handle.join();
 }
 
-async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: SyncSender<DataPoint>) {
+async fn data_loop(args: args::Args, dbc_content: &String, tx: SyncSender<DataPoint>) {
     let dbc;
     match Dbc::parse(&dbc_content) {
         Ok(v) => {
@@ -292,7 +291,7 @@ async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: Sync
         Python::initialize();
         let mut python_string: Vec<String> = vec![];
         let mut python_object: Option<Py<PyAny>> = None;
-        let python = &args.read().unwrap().python.clone();
+        let python = &args.python.clone();
         if python.contains(".py") {
             let python_code =
                 fs::read_to_string(python).expect("Failed to read Python file from disk");
@@ -337,10 +336,10 @@ async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: Sync
     let schema = Arc::new(Schema::new(fields));
 
     let mut input: InputSource;
-    let inputname = &args.read().unwrap().candatainput.clone();
+    let inputname = &args.candatainput.clone();
     match inputname {
         CanDataInput::File => {
-            input = InputSource::File(CanDumpParser::new(&args.read().unwrap().input).unwrap());
+            input = InputSource::File(CanDumpParser::new(&args.input).unwrap());
         }
         CanDataInput::Stdin => {
             input =
@@ -349,8 +348,7 @@ async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: Sync
         #[cfg(feature = "socket")]
         CanDataInput::Socket => {
             input = InputSource::Can(
-                socketwrap::CanWrapper::new(&args.read().unwrap().input)
-                    .expect("Failed to open CAN Socket?\n"),
+                socketwrap::CanWrapper::new(&args.input).expect("Failed to open CAN Socket?\n"),
             );
         }
         #[cfg(not(feature = "socket"))]
@@ -358,10 +356,10 @@ async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: Sync
             panic!("Socketcan not enabled in this build")
         }
         CanDataInput::TcpRemote => {
-            input = InputSource::Tcp(tcpwrapper::TcpWrapper::new(&args.read().unwrap().input));
+            input = InputSource::Tcp(tcpwrapper::TcpWrapper::new(&args.input));
         }
         CanDataInput::UdpRemote => {
-            let addr = args.read().unwrap().input.clone();
+            let addr = args.input.clone();
             input = InputSource::Udp(udpwrapper::UdpWrapper::new(&addr).await);
         }
     }
@@ -371,14 +369,11 @@ async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: Sync
     let use_outsocket: bool;
 
     #[cfg(feature = "socket")]
-    let use_outsocket = !args.read().unwrap().socketout.is_empty();
+    let use_outsocket = !args.socketout.is_empty();
 
     #[cfg(feature = "socket")]
     let mut outsocket = if use_outsocket {
-        Some(
-            CanOutWrapper::new(&args.read().unwrap().socketout)
-                .expect("Failed to open output CAN Socket?\n"),
-        )
+        Some(CanOutWrapper::new(&args.socketout).expect("Failed to open output CAN Socket?\n"))
     } else {
         None
     };
@@ -503,7 +498,7 @@ async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: Sync
                     let col = &mut columns[schema.index_of(signal.name).unwrap()];
                     if !is_filled[schema.index_of(signal.name).unwrap()] {
                         // Only save the first value from each chunk (as opposed to prev version saving last)
-                        if args.read().unwrap().en_ipm {
+                        if args.en_ipm {
                             match col {
                                 GenericColumn::Bool(c) => c.push(Some(signal.value.is_nearly(1.0))),
                                 GenericColumn::I8(c) => c.push(Some(signal.value as i8)),
@@ -525,13 +520,7 @@ async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: Sync
                             .unwrap()] = Some(signal.value);
                         }
 
-                        if args
-                            .read()
-                            .unwrap()
-                            .aux_outputs
-                            .iter()
-                            .any(|s| s == &signal.name)
-                        {
+                        if args.aux_outputs.iter().any(|s| s == &signal.name) {
                             let _ = tx.try_send((
                                 signal.name.to_string(),
                                 relative_time_rcv,
@@ -545,15 +534,13 @@ async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: Sync
             //Err(e) => _ = e,
         }
 
-        if relative_time_rcv > (&args.read().unwrap().cache_ms * f64::from(num_chunks) + offset)
+        if relative_time_rcv > (&args.cache_ms * f64::from(num_chunks) + offset)
             || exit.load(Ordering::SeqCst)
         {
-            if ((&args.read().unwrap().cache_ms * f64::from(num_chunks) + offset)
-                - relative_time_rcv)
-                > 2.0 * &args.read().unwrap().cache_ms
+            if ((&args.cache_ms * f64::from(num_chunks) + offset) - relative_time_rcv)
+                > 2.0 * &args.cache_ms
             {
-                offset += ((&args.read().unwrap().cache_ms * f64::from(num_chunks) + offset)
-                    - relative_time_rcv);
+                offset += ((&args.cache_ms * f64::from(num_chunks) + offset) - relative_time_rcv);
             }
 
             #[cfg(feature = "python")]
@@ -591,7 +578,7 @@ async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: Sync
 
             num_chunks += 1;
 
-            if args.read().unwrap().en_ipm {
+            if args.en_ipm {
                 let col = &mut columns[schema.index_of("Time_ms").unwrap()];
                 is_filled[schema.index_of("Time_ms").unwrap()] = true;
                 match col {
@@ -614,9 +601,9 @@ async fn data_loop(args: Arc<RwLock<args::Args>>, dbc_content: &String, tx: Sync
         }
     }
     println!("");
-    if args.read().unwrap().en_ipm {
+    if args.en_ipm {
         let batch = store::finish_record_batch(columns, schema);
-        store::write_record_batch_to_parquet(&batch, &args.read().unwrap().output).unwrap();
+        store::write_record_batch_to_parquet(&batch, &args.output).unwrap();
         println!("Finished writting out!");
     }
 }

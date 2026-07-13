@@ -55,8 +55,10 @@ Conveniently available is the sender binary which transmits packets in the appro
 - If you wanna cross compile for windows, use cross.
 
 # Features Plot
-- [ ] Refactor to remove rwlocked args struct (removing live plot/regren reconfiguration)
+- [x] Refactor to remove rwlocked args struct (removing live plot/regren reconfiguration)
 - [ ] Refactor plotter core to read from column arrays instead of coppying
 - [ ] Improved GUI style and configurability
 - [ ] Generalize input interface from CAN... maintain configurability via TOML files
 - [ ] Configuration helper cli/tui for dashboard setup and input defs
+- [ ] Refactor configuration, args, plot to have named visualization tabs
+  - [ ] Make red regrens indicated across tabs

@@ -13,7 +13,7 @@ pub enum CanDataInput {
     UdpRemote,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize, Clone)]
 pub struct Args {
     pub dbcfile: String,
     pub input: String,
