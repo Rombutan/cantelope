@@ -1,6 +1,7 @@
 // DBC Parsing
 use dbc_rs::Dbc;
 use std::fs;
+use toml::Table;
 
 // Arrow IP elements
 use arrow::datatypes::{DataType, Field, Schema};
@@ -10,12 +11,12 @@ use std::io::{self, Write};
 
 // Custom data storage helpers
 pub mod store;
-use store::{Column, GenericColumn};
+use store::{Column, GenericColumn, TableStore};
 
 // Custom argument parsing
 pub mod args;
 use std::env;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 // Custom Candump parsing
 use candump::CanDumpParser;
@@ -33,7 +34,6 @@ use pyo3::{
     prelude::*,
     types::{PyAnyMethods, PyModule, PyTuple},
 };
-use std::ffi::CString;
 
 // SocketCAN
 #[cfg(feature = "socket")]
@@ -49,16 +49,10 @@ use socketout::CanOutWrapper;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{process, thread, time};
 
-// Allows data loop to send decoded values back to main thread
-use std::sync::mpsc;
-use std::sync::mpsc::SyncSender;
-
 #[cfg(feature = "plot")]
 pub mod plot;
 
 #[cfg(feature = "plot")]
-use plot::DataPoint;
-
 #[cfg(feature = "plot")]
 use plot::PlotWindow;
 
@@ -131,33 +125,37 @@ fn main() {
 
     let dbc_content = fs::read_to_string(&args.dbcfile).expect("Could not read DBC file"); // Load DBC file contents into string
 
-    let (tx, rx) = mpsc::sync_channel::<DataPoint>(100); // For transfers from the data loop thread to main
-
     let args_en_aux = args.en_aux;
 
     let args_data_thread = args.clone();
 
+    let store = TableStore::new();
+
+    let data_store = store.clone_ref();
     let handle = std::thread::spawn(move || {
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .unwrap()
             .block_on(async move {
-                data_loop(args_data_thread, &dbc_content, tx).await;
+                data_loop(args_data_thread, &dbc_content, data_store).await;
             });
     });
 
     #[cfg(feature = "plot")]
-    if args_en_aux {
-        println!("Starting plotting window!");
-        _ = PlotWindow::run(rx, args);
+    {
+        if args_en_aux {
+            let plot_store_clone = store;
+            println!("Starting plotting window!");
+            _ = PlotWindow::run(plot_store_clone, args);
+        }
     }
 
     #[cfg(not(feature = "end_data_on_close"))]
     let _ = handle.join();
 }
 
-async fn data_loop(args: args::Args, dbc_content: &String, tx: SyncSender<DataPoint>) {
+async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
     let dbc;
     match Dbc::parse(&dbc_content) {
         Ok(v) => {
@@ -210,8 +208,9 @@ async fn data_loop(args: args::Args, dbc_content: &String, tx: SyncSender<DataPo
     // ------- CREATE SCHEMA
     let mut base_row_size = 0; // Just to generate a cool "uncompressed data rate" number
     let mut fields: Vec<Field> = Vec::new(); // vec of column descriptions, later dumped into Arc<Schema>
-    let mut columns: Vec<GenericColumn> = Vec::new(); // This vec actually stores the values
     let mut is_filled: Vec<bool> = Vec::new(); // This will keep track of which values have been filled so ones which haven't can be null balanced
+
+    let mut write_signalmap = store.signalmap.write().unwrap();
 
     let mut column_names = vec!["Time_ms"];
 
@@ -220,13 +219,19 @@ async fn data_loop(args: args::Args, dbc_content: &String, tx: SyncSender<DataPo
         DataType::Float64,
         false, // Time is the only column that must exist in all rows.
     ));
+    write_signalmap.insert("Time_ms".to_string(), 0);
 
-    columns.push(GenericColumn::F64(Column::new())); // Column for time
+    store
+        .write_columns()
+        .push(GenericColumn::F64(Column::new())); // Column for time
 
     is_filled.push(true); // This element of the map won't actually be used, but is needed for indecies to align
 
+    let mut index_counter: usize = 1;
     for message in dbc.messages().iter() {
         for signal in message.signals().iter() {
+            index_counter += 1;
+            write_signalmap.insert(signal.name().to_string(), index_counter);
             is_filled.push(false); // If I ever update this to exclude ANY signals which are present in the DBC, I will need to move this into the blocks below
             column_names.push(signal.name());
             if signal.length() == 1
@@ -237,31 +242,39 @@ async fn data_loop(args: args::Args, dbc_content: &String, tx: SyncSender<DataPo
                 // Definetely a boolean
                 base_row_size += 1;
                 fields.push(Field::new(signal.name(), DataType::Boolean, true));
-                columns.push(GenericColumn::Bool(Column::new()));
+                store
+                    .write_columns()
+                    .push(GenericColumn::Bool(Column::new()));
             } else if (signal.factor() % 1.0).is_nearly(1.0) {
                 // Definetely an integer
                 if signal.min() >= f64::from(i8::MIN) && signal.max() <= f64::from(i8::MAX) {
                     // Fits in i8
                     base_row_size += 8;
                     fields.push(Field::new(signal.name(), DataType::Int8, true));
-                    columns.push(GenericColumn::I8(Column::new()));
+                    store.write_columns().push(GenericColumn::I8(Column::new()));
                 } else if signal.min() >= f64::from(i16::MIN) && signal.max() <= f64::from(i16::MAX)
                 {
                     // Fits in i16
                     base_row_size += 16;
                     fields.push(Field::new(signal.name(), DataType::Int16, true));
-                    columns.push(GenericColumn::I16(Column::new()));
+                    store
+                        .write_columns()
+                        .push(GenericColumn::I16(Column::new()));
                 } else if signal.min() >= f64::from(i32::MIN) && signal.max() <= f64::from(i32::MAX)
                 {
                     // Fits in i32
                     base_row_size += 32;
                     fields.push(Field::new(signal.name(), DataType::Int32, true));
-                    columns.push(GenericColumn::I32(Column::new()));
+                    store
+                        .write_columns()
+                        .push(GenericColumn::I32(Column::new()));
                 } else {
                     // must fits in i64 :shrug
                     base_row_size += 64;
                     fields.push(Field::new(signal.name(), DataType::Int64, true));
-                    columns.push(GenericColumn::I64(Column::new()));
+                    store
+                        .write_columns()
+                        .push(GenericColumn::I64(Column::new()));
                 }
             } else {
                 // Float
@@ -274,16 +287,21 @@ async fn data_loop(args: args::Args, dbc_content: &String, tx: SyncSender<DataPo
                 if signal.min() >= f64::from(f32::MIN) && signal.max() <= f64::from(f32::MAX) {
                     base_row_size += 32;
                     fields.push(Field::new(signal.name(), DataType::Float32, true));
-                    columns.push(GenericColumn::F32(Column::new()));
+                    store
+                        .write_columns()
+                        .push(GenericColumn::F32(Column::new()));
                 } else {
                     // Must fits in f64 :shrug
                     base_row_size += 64;
                     fields.push(Field::new(signal.name(), DataType::Float64, true));
-                    columns.push(GenericColumn::F64(Column::new()));
+                    store
+                        .write_columns()
+                        .push(GenericColumn::F64(Column::new()));
                 }
             }
         }
     }
+    drop(write_signalmap);
     println!("\nBasis row size: {} bits", base_row_size);
 
     #[cfg(feature = "python")]
@@ -335,6 +353,8 @@ async fn data_loop(args: args::Args, dbc_content: &String, tx: SyncSender<DataPo
 
     let schema = Arc::new(Schema::new(fields));
 
+    println!("Schema created");
+
     let mut input: InputSource;
     let inputname = &args.candatainput.clone();
     match inputname {
@@ -363,6 +383,8 @@ async fn data_loop(args: args::Args, dbc_content: &String, tx: SyncSender<DataPo
             input = InputSource::Udp(udpwrapper::UdpWrapper::new(&addr).await);
         }
     }
+
+    println!("Input created!");
 
     #[cfg(feature = "socket")]
     let mut outsocket: CanOutWrapper;
@@ -439,7 +461,7 @@ async fn data_loop(args: args::Args, dbc_content: &String, tx: SyncSender<DataPo
 
         match input {
             InputSource::File(ref mut filestream) => {
-                if (filestream.parse()) {
+                if filestream.parse() {
                     exit.store(true, Ordering::SeqCst);
                 }
                 timestamp = filestream.get_timestamp();
@@ -494,12 +516,19 @@ async fn data_loop(args: args::Args, dbc_content: &String, tx: SyncSender<DataPo
 
         match dbc.decode(id, &data, false) {
             Ok(decoded) => {
+                let mut write_col = store.write_columns();
                 for signal in decoded.iter() {
-                    let col = &mut columns[schema.index_of(signal.name).unwrap()];
-                    if !is_filled[schema.index_of(signal.name).unwrap()] {
+                    let index = store
+                        .signalmap
+                        .read()
+                        .unwrap()
+                        .get(signal.name)
+                        .expect("Schema, map, or column vector poisoned")
+                        .clone();
+                    if !is_filled[index] {
                         // Only save the first value from each chunk (as opposed to prev version saving last)
                         if args.en_ipm {
-                            match col {
+                            match &mut write_col[index] {
                                 GenericColumn::Bool(c) => c.push(Some(signal.value.is_nearly(1.0))),
                                 GenericColumn::I8(c) => c.push(Some(signal.value as i8)),
                                 GenericColumn::I32(c) => c.push(Some(signal.value as i32)),
@@ -509,7 +538,7 @@ async fn data_loop(args: args::Args, dbc_content: &String, tx: SyncSender<DataPo
                                 GenericColumn::F64(c) => c.push(Some(signal.value)),
                                 _ => {}
                             }
-                            is_filled[schema.index_of(signal.name).unwrap()] = true;
+                            is_filled[index] = true;
                         }
 
                         #[cfg(feature = "python")]
@@ -518,14 +547,6 @@ async fn data_loop(args: args::Args, dbc_content: &String, tx: SyncSender<DataPo
                                 .iter()
                                 .position(|x| x == &signal.name.to_string()))
                             .unwrap()] = Some(signal.value);
-                        }
-
-                        if args.aux_outputs.iter().any(|s| s == &signal.name) {
-                            let _ = tx.try_send((
-                                signal.name.to_string(),
-                                relative_time_rcv,
-                                signal.value,
-                            ));
                         }
                     }
                 }
@@ -578,22 +599,23 @@ async fn data_loop(args: args::Args, dbc_content: &String, tx: SyncSender<DataPo
 
             num_chunks += 1;
 
-            if args.en_ipm {
-                let col = &mut columns[schema.index_of("Time_ms").unwrap()];
-                is_filled[schema.index_of("Time_ms").unwrap()] = true;
-                match col {
-                    GenericColumn::F64(c) => c.push(Some(relative_time_rcv)),
-                    _ => {}
-                }
-
-                for (index, value) in is_filled.iter().enumerate() {
-                    if !value {
-                        columns[index].push_null();
-                    }
-                }
-
-                is_filled.fill(false);
+            let mut write_cols = store.write_columns();
+            is_filled[0] = true;
+            match &mut write_cols[0] {
+                GenericColumn::F64(c) => c.push(Some(relative_time_rcv)),
+                _ => {}
             }
+
+            for (index, value) in is_filled.iter().enumerate() {
+                if !value {
+                    write_cols[index].push_null();
+                }
+            }
+
+            store.set_ready(); // Don't let plot start until there's a row.
+
+            is_filled.fill(false);
+
             if num_chunks % 250 == 0 {
                 print!("\rRow #{}", num_chunks);
                 io::stdout().flush().unwrap();
@@ -601,9 +623,9 @@ async fn data_loop(args: args::Args, dbc_content: &String, tx: SyncSender<DataPo
         }
     }
     println!("");
-    if args.en_ipm {
-        let batch = store::finish_record_batch(columns, schema);
-        store::write_record_batch_to_parquet(&batch, &args.output).unwrap();
-        println!("Finished writting out!");
-    }
+    // if args.en_ipm {
+    //     let batch = store::finish_record_batch(, schema);
+    //     store::write_record_batch_to_parquet(&batch, &args.output).unwrap();
+    //     println!("Finished writting out!");
+    // }
 }

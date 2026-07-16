@@ -56,9 +56,20 @@ Conveniently available is the sender binary which transmits packets in the appro
 
 # Features Plot
 - [x] Refactor to remove rwlocked args struct (removing live plot/regren reconfiguration)
+- [ ] ~~Get entire program onto tokio instead of multi-thread+tokio~~
 - [ ] Refactor plotter core to read from column arrays instead of coppying
+- [ ] Change time_ms to a special column and change units to seconds
+- [ ] Much more effecient+organized struct for tracking columns
 - [ ] Improved GUI style and configurability
+  - [ ] Add tree-like signal viewer widget configurable to "/" or a node
+  - [ ] Seperate ui configuration toml, otherwise start with blank
+  - [ ] Signals can be conveniently added by tree viewer
 - [ ] Generalize input interface from CAN... maintain configurability via TOML files
+  - [ ] Develop generalized "input" struct, which can be extended(?) for other interfaces... async pls
 - [ ] Configuration helper cli/tui for dashboard setup and input defs
 - [ ] Refactor configuration, args, plot to have named visualization tabs
   - [ ] Make red regrens indicated across tabs
+- [ ] Implement dirs or similar for storing dbcs and dashboard configs where they can be accessed directory agnostically
+- [ ] Add triggers for finding events
+  - [ ] allow special plots which show the latest trigger event
+  - [ ] a special thin plot for just showing color coded trigger events, with jump functionality

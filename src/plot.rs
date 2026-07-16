@@ -1,14 +1,11 @@
 use iced::Alignment::Center;
 use iced::{
-    Background, Element, Length, Size, Subscription, keyboard, time, widget::Button,
+    Background, Element, Length, Size, Subscription, Theme, keyboard, time, widget::Button,
     widget::Column, widget::Row, widget::Text, widget::text_input,
 };
 
-use iced_aw::menu::Menu;
-
 use iced::widget::{container, text};
 use plotters::prelude::*;
-use plotters::style::Color;
 use plotters_iced2::{Chart, ChartBuilder, ChartWidget};
 use std::collections::hash_map::DefaultHasher;
 use std::fmt::Write;
@@ -22,7 +19,7 @@ use std::{f64, usize};
 
 use itertools::Itertools;
 
-pub type DataPoint = (String, f64, f64); // (signal, x, y)
+use crate::store;
 
 use crate::args;
 use args::Args;
@@ -36,14 +33,14 @@ fn int_from_str(name: &str) -> usize {
     hash as usize
 }
 pub struct PlotWindow {
-    receiver: Arc<Mutex<Receiver<DataPoint>>>,
-    signals: HashMap<String, VecDeque<(f64, f64)>>,
+    store: store::TableStore,
     last_redraw: Instant,
     args: Args,
     play: bool,
     time_range_text: String,
     x_window: f64,
     theme_mode: iced::theme::Mode,
+    theme: iced::Theme,
 }
 
 #[derive(Debug, Clone)]
@@ -57,24 +54,49 @@ pub enum Message {
     Nothing,
 }
 
+fn state_to_theme(state: &PlotWindow) -> Theme {
+    return mode_to_theme(&state.theme_mode);
+}
+
+fn mode_to_theme(theme_mode: &iced::theme::Mode) -> Theme {
+    match theme_mode {
+        iced::theme::Mode::Dark => {
+            return Theme::TokyoNight;
+        }
+        iced::theme::Mode::Light | iced::theme::Mode::None => {
+            return Theme::TokyoNightLight;
+        }
+    }
+}
+
+fn iced_color_to_plotters(iced: iced::Color) -> RGBColor {
+    let plotters = {
+        RGBColor(
+            (iced.r * 255.0) as u8,
+            (iced.g * 255.0) as u8,
+            (iced.b * 255.0) as u8,
+        )
+    };
+    return plotters;
+}
+
 impl PlotWindow {
-    pub fn run(receiver: Receiver<DataPoint>, _args: Args) -> iced::Result {
-        let receiver = Arc::new(Mutex::new(receiver));
+    pub fn run(store: store::TableStore, _args: Args) -> iced::Result {
+        store.wait_until_ready();
         let args = _args.clone();
         iced::application(
             {
-                let receiver = Arc::clone(&receiver);
                 move || {
                     (
                         PlotWindow {
-                            receiver: Arc::clone(&receiver),
-                            signals: HashMap::new(),
+                            store: store.clone_ref(),
                             last_redraw: Instant::now(),
                             args: args.clone(),
                             play: true,
                             time_range_text: String::from("3000"),
                             x_window: 3000.0,
                             theme_mode: iced::theme::Mode::Light,
+                            theme: mode_to_theme(&iced::theme::Mode::Light),
                         },
                         iced::system::theme().map(Message::ThemeChanged),
                     )
@@ -84,36 +106,14 @@ impl PlotWindow {
             PlotWindow::view,
         )
         .subscription(PlotWindow::subscription)
-        .title("Cantelope Plots")
+        .title("Cantelope")
+        .theme(state_to_theme)
         .window_size(Size::new(1400.0, 1000.0))
         .centered()
         .run()
     }
 
-    fn ingest_points(&mut self) {
-        if let Ok(receiver) = self.receiver.lock() {
-            while let Ok((name, x, y)) = receiver.try_recv() {
-                let series = self.signals.entry(name).or_default();
-
-                // 1. Add the new point
-                series.push_back((x, y));
-
-                // 2. The Delta-X Limit
-                // Get the newest X value we just pushed
-                let latest_x = x;
-
-                // 3. Remove points from the front while they are outside the 3000-unit window
-                while let Some(&(oldest_x, _)) = series.front() {
-                    if latest_x - oldest_x > self.x_window {
-                        series.pop_front();
-                    } else {
-                        // The oldest point is now within the window, so stop popping
-                        break;
-                    }
-                }
-            }
-        }
-    }
+    fn ingest_points(&mut self) {}
 
     fn update(&mut self, message: Message) {
         match message {
@@ -134,6 +134,7 @@ impl PlotWindow {
             }
             Message::ThemeChanged(mode) => {
                 self.theme_mode = mode;
+                self.theme = mode_to_theme(&mode);
             }
             Message::BumpTime(up) => {
                 if up {
@@ -151,7 +152,7 @@ impl PlotWindow {
 
     fn subscription(&self) -> Subscription<Message> {
         // 1. Your existing timer
-        let timer = time::every(std::time::Duration::from_millis(10)).map(|_| Message::Tick);
+        let timer = time::every(std::time::Duration::from_millis(1000 / 30)).map(|_| Message::Tick);
 
         // 2. The keyboard listener
         let keyboard = keyboard::listen().map(|event| match event {
@@ -192,11 +193,6 @@ impl PlotWindow {
                     .width(100),
             );
 
-        let text_color = match self.theme_mode {
-            iced::theme::Mode::Dark => RGBColor(255, 255, 255),
-            _ => RGBColor(0, 0, 0),
-        };
-
         let status_row =
             self.args
                 .regrens
@@ -204,7 +200,14 @@ impl PlotWindow {
                 .fold(row![].spacing(10).padding(10), |row, tuple| {
                     // .clone() the tuple (or the strings inside it)
                     // so SignalStatus owns the data, not a reference to the lock
-                    row.push(SignalStatus::new(tuple.clone(), &self.signals).view())
+                    row.push(
+                        SignalStatus::new(
+                            tuple.clone(),
+                            self.store.clone_ref(),
+                            self.theme.clone(),
+                        )
+                        .view(),
+                    )
                 });
 
         let charts: Vec<Element<Message>> = self
@@ -213,11 +216,11 @@ impl PlotWindow {
             .iter()
             .map(|plot_group| {
                 ChartWidget::new(SignalChart {
-                    signals: &self.signals,
+                    store: self.store.clone_ref(),
                     time_range: &self.x_window,
                     // Pass the inner Vec<String> to the toplot field
                     toplot: plot_group.clone(),
-                    text_color,
+                    theme: self.theme.clone(),
                 })
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -257,10 +260,10 @@ impl PlotWindow {
 // }
 
 struct SignalChart<'a> {
-    signals: &'a HashMap<String, VecDeque<(f64, f64)>>,
+    store: store::TableStore,
     time_range: &'a f64,
     toplot: Vec<String>,
-    pub text_color: RGBColor,
+    pub theme: iced::Theme,
 }
 
 impl<'a> Chart<Message> for SignalChart<'a> {
@@ -269,36 +272,63 @@ impl<'a> Chart<Message> for SignalChart<'a> {
     fn build_chart<DB: DrawingBackend>(&self, state: &Self::State, mut builder: ChartBuilder<DB>) {
         _ = state;
 
-        let mut min_x = f64::INFINITY;
-        let mut max_x = f64::NEG_INFINITY;
-        let mut max_y = -100000.0;
-        let mut min_y = 100000.0;
+        let min_x;
+        let max_x;
+        let mut max_y: f64 = -100000.0;
+        let mut min_y: f64 = 100000.0;
 
-        for name in &self.toplot {
-            if let Some(series) = self.signals.get(name) {
-                for &(_x, y) in series {
-                    if max_y < y {
-                        max_y = y;
-                    }
-                    if min_y > y {
-                        min_y = y;
-                    }
+        let start_index;
+        let stop_index;
+        match &self.store.read_columns()[0] {
+            store::GenericColumn::F64(c) => {
+                start_index = self
+                    .store
+                    .find_index_back_by_period(self.time_range.clone());
+
+                stop_index = c.len() - 1;
+
+                if stop_index > 0 {
+                    min_x = c.values[start_index];
+                    max_x = c.values[stop_index];
+                } else {
+                    min_x = 0.0;
+                    max_x = 0.0;
                 }
             }
-        }
+            _ => panic!("Time column must be F64"),
+        };
 
-        for series in self.signals.values() {
-            for &(x, _y) in series {
-                if max_x < x {
-                    max_x = x;
+        let columns = self.store.read_columns();
+        let mut chart_lines: Vec<(&String, LineSeries<DB, (f64, f64)>)> = vec![];
+        for name in self.toplot.iter() {
+            let Ok(signal_map) = self.store.signalmap.read() else {
+                continue;
+            };
+
+            let Some(&col_index) = signal_map.get(name) else {
+                continue;
+            };
+
+            if let Some(series) = self.store.get_plot_series(
+                &columns,
+                col_index, // No need for cloning if we copy/dereference the index
+                start_index,
+                stop_index,
+            ) {
+                let style = Palette99::pick(int_from_str(name)).stroke_width(3);
+                chart_lines.push((
+                    name,
+                    plotters::series::LineSeries::new(series.coords, style),
+                ));
+
+                if series.y_min < min_y {
+                    min_y = series.y_min;
                 }
-                min_x = max_x - self.time_range;
-            }
-        }
 
-        if !min_x.is_finite() {
-            min_x = 0.0;
-            max_x = 10.0;
+                if series.y_max > max_y {
+                    max_y = series.y_max;
+                }
+            }
         }
 
         let chart = builder
@@ -310,103 +340,85 @@ impl<'a> Chart<Message> for SignalChart<'a> {
             .build_cartesian_2d(min_x..max_x, min_y - 0.01..max_y + 0.01)
             .unwrap();
 
-        let text_color = self.text_color;
+        let text_color = iced_color_to_plotters(self.theme.palette().text);
 
         chart
             .configure_mesh()
             .bold_line_style(&text_color.mix(0.4))
+            .light_line_style(&text_color.mix(0.2))
             .set_all_tick_mark_size(-3)
-            .max_light_lines(0)
-            .label_style(("sans-serif", 11).into_font().color(&text_color))
+            .max_light_lines(1)
+            .y_label_formatter(&|y: &f64| {
+                let scaled_val = y;
+                let scaled_range = (max_y - min_y) / 1000.0;
+
+                if scaled_val.abs() >= 10000.0
+                    || (scaled_range.abs() > 0.0 && scaled_range.abs() < 0.01)
+                {
+                    format!("{:.2e}", scaled_val)
+                } else if scaled_range < 20.0 {
+                    format!("{:.1}", scaled_val)
+                } else {
+                    format!("{:.0}", scaled_val)
+                }
+            })
+            .x_label_formatter(&|x: &f64| {
+                let scaled_val = x / 1000.0;
+
+                if max_x - min_x < 100.0 {
+                    // Range is small: include 2 decimal places (adjust precision as desired)
+                    format!("{:.2}", scaled_val)
+                } else {
+                    // Range is large: display as a whole integer
+                    format!("{:.0}", scaled_val)
+                }
+            })
+            .label_style(("sans-serif", 12).into_font().color(&text_color))
             .axis_style(&text_color)
             .draw()
             .unwrap();
 
-        for (_idx, (name, series)) in self.signals.iter().enumerate() {
-            if self.toplot.contains(name) {
-                let style = Palette99::pick(int_from_str(name)).stroke_width(3);
+        for (name, chart_line) in chart_lines {
+            let style = Palette99::pick(int_from_str(name)).stroke_width(3);
 
-                let mut all_points_iter = series.iter().copied().multipeek();
-                let mut cur_seg: Vec<(f64, f64)> = Vec::new();
-                let mut last_time = all_points_iter.peek().unwrap_or(&(0.0, 0.0)).0;
+            // Use series.y_min and series.y_max to construct your Cartesian 2D scale!
 
-                // Find 10th percentile ish gap
-                let mut smallest_gaps = [f64::MAX; 10];
-
-                let mut last_t = match all_points_iter.peek() {
-                    Some(p) => p.0,
-                    None => 0.0,
-                };
-
-                for _ in 0..100 {
-                    if let Some(p) = all_points_iter.peek() {
-                        let gap = p.0 - last_t;
-                        last_t = p.0;
-
-                        if gap > 0.0 {
-                            // If this gap is smaller than the largest "small" gap we've tracked
-                            if gap < smallest_gaps[9] {
-                                smallest_gaps[9] = gap;
-                                // Keep the 10-element array sorted so index 9 is always the max
-                                smallest_gaps.sort_by(|a, b| a.partial_cmp(b).unwrap());
-                            }
-                        }
-                    } else {
-                        break;
-                    }
-                }
-                all_points_iter.reset_peek();
-                let base_gap = if smallest_gaps[9] == f64::MAX {
-                    1.0
-                } else {
-                    smallest_gaps[9]
-                };
-                let mut tengap = base_gap * 100.0;
-
-                for (t, v) in all_points_iter {
-                    if t - last_time > (tengap / 100.0) * 1.5 {
-                        // Should break on a missed or highly delayed packet
-                        chart
-                            .draw_series(LineSeries::new(cur_seg.clone(), style))
-                            .unwrap();
-                        cur_seg.clear()
-                    } else {
-                        tengap = tengap * 0.99;
-                        tengap = tengap + (t - last_time);
-                    }
-
-                    cur_seg.push((t, v));
-                    last_time = t;
-                }
-
-                let mut series_name = name.clone().to_string();
-                write!(
-                    series_name,
-                    // Plotters computes the size of the background
-                    // rectangle to draw behind the legend incorrectly, so...
-                    ": {:.1}hz              ",
-                    1000.0 / (tengap / 100.0)
-                )
-                .unwrap();
-                chart
-                    .draw_series(LineSeries::new(cur_seg.clone(), style))
-                    .unwrap()
-                    .label(series_name)
-                    .legend(move |(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], style));
-            }
+            let mut series_name = name.clone().to_string();
+            write!(
+                series_name,
+                // Plotters computes the size of the background
+                // rectangle to draw behind the legend incorrectly, so...
+                ": {:.1}hz              ",
+                // 1000.0 / (tengap / 100.0)
+                100.0
+            )
+            .unwrap();
+            chart
+                .draw_series(chart_line)
+                .unwrap()
+                .label(series_name)
+                .legend(move |(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], style));
         }
+        // for (t, v) in all_points_iter {
+        //     if t - last_time > (tengap / 100.0) * 1.5 {
+        //         // Should break on a missed or highly delayed packet
+        //         chart
+        //             .draw_series(LineSeries::new(cur_seg.clone(), style))
+        //             .unwrap();
+        //         cur_seg.clear()
+        //     } else {
+        //         tengap = tengap * 0.99;
+        //         tengap = tengap + (t - last_time);
+        //     }
+
+        //     cur_seg.push((t, v));
+        //     last_time = t;
+        // }
 
         chart
             .configure_series_labels()
             .position(SeriesLabelPosition::UpperLeft) // This moves it to the top left
-            .background_style(
-                RGBColor(
-                    255 - &text_color.rgb().0,
-                    255 - &text_color.rgb().1,
-                    255 - &text_color.rgb().2,
-                )
-                .mix(0.4),
-            )
+            .background_style(iced_color_to_plotters(self.theme.palette().background))
             .border_style(&TRANSPARENT)
             .label_font(("sans-serif", 12).into_font().color(&text_color))
             .draw()
@@ -414,35 +426,40 @@ impl<'a> Chart<Message> for SignalChart<'a> {
     }
 }
 
-struct SignalStatus<'a> {
+struct SignalStatus {
     // The specific signal name to look up
     name: String,
     // true for >, false for <
     is_greater: bool,
     threshold: f64,
     // The shared signal data
-    signals: &'a HashMap<String, VecDeque<(f64, f64)>>,
+    store: store::TableStore,
+    theme: iced::Theme,
 }
 
-impl<'a> SignalStatus<'a> {
-    pub fn new(
-        tuple: (String, bool, f64),
-        signals: &'a HashMap<String, VecDeque<(f64, f64)>>,
-    ) -> Self {
+impl<'a> SignalStatus {
+    pub fn new(tuple: (String, bool, f64), store: store::TableStore, theme: iced::Theme) -> Self {
         Self {
             name: tuple.0,
             is_greater: tuple.1,
             threshold: tuple.2,
-            signals,
+            store: store,
+            theme: theme,
         }
     }
 
     pub fn view(&self) -> Element<'a, Message> {
         let latest_val = self
-            .signals
-            .get(&self.name)
-            .and_then(|series| series.back())
-            .map(|(_x, y)| *y)
+            .store
+            .get_latest_valid_value_by_index(
+                self.store
+                    .signalmap
+                    .read()
+                    .unwrap()
+                    .get(&self.name)
+                    .unwrap()
+                    .clone(),
+            )
             .unwrap_or(0.0);
 
         let is_ok = if self.is_greater {
@@ -470,10 +487,10 @@ impl<'a> SignalStatus<'a> {
         )
         .padding(10)
         // Corrected Styling Logic
-        .style(move |_theme| container::Style {
-            background: Some(Background::Color(box_color)),
-            text_color: Some(iced::Color::WHITE),
-            ..Default::default()
+        .style(move |theme| {
+            let mut style = container::rounded_box(theme).background(Background::Color(box_color));
+            style.text_color = Some(theme.palette().text);
+            style
         })
         .into()
     }
