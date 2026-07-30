@@ -526,20 +526,17 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
                         .expect("Schema, map, or column vector poisoned")
                         .clone();
                     if !is_filled[index] {
-                        // Only save the first value from each chunk (as opposed to prev version saving last)
-                        if args.en_ipm {
-                            match &mut write_col[index] {
-                                GenericColumn::Bool(c) => c.push(Some(signal.value.is_nearly(1.0))),
-                                GenericColumn::I8(c) => c.push(Some(signal.value as i8)),
-                                GenericColumn::I32(c) => c.push(Some(signal.value as i32)),
-                                GenericColumn::I64(c) => c.push(Some(signal.value as i64)),
-                                //                            GenericColumn::F16(c) => c.push(Some(f16::from(signal.value))),
-                                GenericColumn::F32(c) => c.push(Some(signal.value as f32)),
-                                GenericColumn::F64(c) => c.push(Some(signal.value)),
-                                _ => {}
-                            }
-                            is_filled[index] = true;
+                        match &mut write_col[index] {
+                            GenericColumn::Bool(c) => c.push(Some(signal.value.is_nearly(1.0))),
+                            GenericColumn::I8(c) => c.push(Some(signal.value as i8)),
+                            GenericColumn::I32(c) => c.push(Some(signal.value as i32)),
+                            GenericColumn::I64(c) => c.push(Some(signal.value as i64)),
+                            //                            GenericColumn::F16(c) => c.push(Some(f16::from(signal.value))),
+                            GenericColumn::F32(c) => c.push(Some(signal.value as f32)),
+                            GenericColumn::F64(c) => c.push(Some(signal.value)),
+                            _ => {}
                         }
+                        is_filled[index] = true;
 
                         #[cfg(feature = "python")]
                         if python_string.iter().any(|s| s == &signal.name) {
@@ -623,9 +620,21 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
         }
     }
     println!("");
-    // if args.en_ipm {
-    //     let batch = store::finish_record_batch(, schema);
-    //     store::write_record_batch_to_parquet(&batch, &args.output).unwrap();
-    //     println!("Finished writting out!");
-    // }
+
+    if args.en_ipm {
+        let arc: Arc<std::sync::RwLock<Vec<GenericColumn>>> = store.columns;
+        match Arc::try_unwrap(arc) {
+            Ok(lock) => {
+                let owned: Vec<GenericColumn> = lock.into_inner().unwrap();
+                let batch = store::finish_record_batch(owned, schema);
+                store::write_record_batch_to_parquet(&batch, &args.output).unwrap();
+                println!("Finished writting out!");
+            }
+            Err(_arc) => {
+                // still other Arc clones alive somewhere — try_unwrap gives you
+                // the Arc back unchanged in this case
+                eprintln!("Arc still has other owners, can't take ownership");
+            }
+        }
+    }
 }

@@ -21,7 +21,7 @@ pub struct PlottableSeries<'a> {
 pub struct TableStore {
     // We use RwLock so multiple threads can read simultaneously,
     // but only one thread can mutate at a time.
-    columns: Arc<RwLock<Vec<GenericColumn>>>,
+    pub columns: Arc<RwLock<Vec<GenericColumn>>>,
     pub signalmap: Arc<RwLock<HashMap<String, usize>>>,
     ready_state: Arc<(Mutex<bool>, Condvar)>, // Ready is set once schema is complete. Once set, cannot be unset.
 }
