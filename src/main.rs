@@ -217,7 +217,7 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
     fields.push(Field::new(
         "Time_ms",
         DataType::Float64,
-        false, // Time is the only column that must exist in all rows.
+        false, // Time is the let mut index_counter: usize = 0;only column that must exist in all rows.
     ));
     write_signalmap.insert("Time_ms".to_string(), 0);
 
@@ -225,9 +225,9 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
         .write_columns()
         .push(GenericColumn::F64(Column::new())); // Column for time
 
-    is_filled.push(true); // This element of the map won't actually be used, but is needed for indecies to align
+    is_filled.push(true); // This element of the map won't actually be used, but is needed for indecies to align. Corresponds to Time_ms
 
-    let mut index_counter: usize = 1;
+    let mut index_counter: usize = 0;
     for message in dbc.messages().iter() {
         for signal in message.signals().iter() {
             index_counter += 1;
@@ -525,6 +525,9 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
                         .get(signal.name)
                         .expect("Schema, map, or column vector poisoned")
                         .clone();
+                    if (is_filled.len() <= index){
+                        println!("Signal out of range: {} at index: {}", signal.name, index);
+                    }
                     if !is_filled[index] {
                         match &mut write_col[index] {
                             GenericColumn::Bool(c) => c.push(Some(signal.value.is_nearly(1.0))),
