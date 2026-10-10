@@ -31,13 +31,6 @@ pub mod udpwrapper;
 use crate::args::Args;
 use crate::args::CanDataInput;
 
-// Pyo3
-#[cfg(feature = "python")]
-use pyo3::{
-    prelude::*,
-    types::{PyAnyMethods, PyModule, PyTuple},
-};
-
 // SocketCAN
 #[cfg(feature = "socket")]
 pub mod socketwrap;
@@ -307,53 +300,6 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
     drop(write_signalmap);
     println!("\nBasis row size: {} bits", base_row_size);
 
-    #[cfg(feature = "python")]
-    {
-        Python::initialize();
-        let mut python_string: Vec<String> = vec![];
-        let mut python_object: Option<Py<PyAny>> = None;
-        let python = &args.python.clone();
-        if python.contains(".py") {
-            let python_code =
-                fs::read_to_string(python).expect("Failed to read Python file from disk");
-
-            // Convert the dynamic code string into a C-compatible string slice
-            let py_code_c = CString::new(python_code).unwrap();
-            let pyfile = CString::new(python.as_str()).unwrap();
-            let pymod = CString::new(python.replace(".py", "")).unwrap();
-
-            Python::attach(|py| {
-                // Compile the dynamic string into an in-memory module
-                let module = PyModule::from_code(py, &py_code_c, &pyfile, &pymod)?;
-
-                // Find the class inside the module
-                match module.getattr("CantelopeExtension") {
-                    Ok(class_obj) => {
-                        let factory_result =
-                            class_obj.call_method1("create_and_initialize", (column_names,))?;
-                        let tuple_result = factory_result.downcast::<PyTuple>()?;
-
-                        let instance = tuple_result.get_item(0)?;
-                        python_object = Some(instance.unbind());
-
-                        python_string = tuple_result.get_item(1).unwrap().extract()?;
-                    }
-                    Err(e) => {
-                        // This will print the exact Python stack trace/error type (e.g., AttributeError)
-                        eprintln!("Failed to get CantelopeExtension: {:?}", e);
-
-                        // Let's also print everything that IS available in the module to debug
-                        if let Ok(dir) = module.dir() {
-                            println!("Available attributes in module: {:?}", dir);
-                        }
-                    }
-                }
-                Ok::<(), PyErr>(())
-            })
-            .unwrap();
-        }
-    }
-
     let schema = Arc::new(Schema::new(fields));
 
     println!("Schema created");
@@ -452,9 +398,6 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
 
     let mut num_chunks = 1;
     while !exit.load(Ordering::SeqCst) {
-        #[cfg(feature = "python")]
-        let mut python_inputs: Vec<Option<f64>> = vec![None; python_string.len()];
-
         let mut offset: f64 = 0.0;
 
         // Message recieve loop
@@ -543,14 +486,6 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
                             _ => {}
                         }
                         is_filled[index] = true;
-
-                        #[cfg(feature = "python")]
-                        if python_string.iter().any(|s| s == &signal.name) {
-                            python_inputs[(python_string
-                                .iter()
-                                .position(|x| x == &signal.name.to_string()))
-                            .unwrap()] = Some(signal.value);
-                        }
                     }
                 }
             }
@@ -565,39 +500,6 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
                 > 2.0 * &args.cache_ms
             {
                 offset += ((&args.cache_ms * f64::from(num_chunks) + offset) - relative_time_rcv);
-            }
-
-            #[cfg(feature = "python")]
-            {
-                if let Some(ref py_obj) = python_object {
-                    let mut python_outputs: Vec<(String, f64)> = vec![];
-                    Python::attach(|py| {
-                        // Re-bind the object to the current GIL context
-                        let bound_obj = py_obj.bind(py);
-
-                        // Execute the method on the instance
-                        let py_result =
-                            bound_obj.call_method1("process_numbers", (python_inputs,))?;
-
-                        // Extract the result back into native Rust types
-                        python_outputs = py_result.extract()?;
-
-                        Ok::<(), PyErr>(())
-                    })
-                    .unwrap();
-
-                    for value in python_outputs {
-                        if args
-                            .read()
-                            .unwrap()
-                            .aux_outputs
-                            .iter()
-                            .any(|s| s == &value.0)
-                        {
-                            let _ = tx.try_send((value.0.to_string(), relative_time_rcv, value.1));
-                        }
-                    }
-                }
             }
 
             num_chunks += 1;
