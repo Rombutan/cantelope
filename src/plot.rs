@@ -157,9 +157,14 @@ impl PlotWindow {
                 if !self.x_live_attach {
                     self.x_end += adjustment;
                 } else {
-                    self.x_live_attach = false;
-                    self.x_end =
-                        self.store.get_latest_valid_value_by_index(0).unwrap_or(0.0) + adjustment;
+                    if adjustment < 0.1 {
+                        self.x_live_attach = false;
+                        self.x_end = self.store.get_latest_valid_value_by_index(0).unwrap_or(0.0)
+                            + adjustment;
+                    }
+                }
+                if self.x_end >= self.store.get_latest_valid_value_by_index(0).unwrap_or(0.0) {
+                    self.x_end = self.store.get_latest_valid_value_by_index(0).unwrap_or(0.0);
                 }
             }
             Message::Nothing => {}
