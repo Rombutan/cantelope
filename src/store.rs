@@ -75,29 +75,6 @@ impl TableStore {
         self.columns.write().expect("RwLock poisoned")
     }
 
-    pub fn find_n_back_by_period(&self, period: f64) -> usize {
-        let cols = self.columns.read().expect("lock poisoned");
-        let time_col = match &cols[0] {
-            GenericColumn::F64(c) => &c.values,
-            _ => panic!("Time column must be F64"),
-        };
-
-        if time_col.is_empty() {
-            return 0;
-        }
-
-        let time_len = time_col.len();
-
-        let current_time = time_col[time_len - 1];
-        let target_time = current_time - period;
-
-        // Binary search handles irregular/dynamic step sizes
-        match time_col.binary_search_by(|probe| probe.partial_cmp(&target_time).unwrap()) {
-            Ok(idx) => time_len - idx,  // Exact match found
-            Err(idx) => time_len - idx, // Closest index following the target time
-        } // TODO - add gating to make sure time column never decreases. otherwise this gonna break
-    }
-
     /// O(log n) Lookback: Finds the index that represents exactly `period` seconds ago.
     /// Ideal for real-time plotting windows.
     pub fn find_index_back_by_period(&self, period: f64) -> usize {
