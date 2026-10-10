@@ -530,7 +530,7 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
     println!("");
 
     if args.en_ipm {
-        println!("Starting Write out");
+        print!("Writing Out Stored Data");
         let props = WriterProperties::builder()
             .set_compression(parquet::basic::Compression::SNAPPY)
             .build();
@@ -544,8 +544,9 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
         while let Some(batch) = store.next_record_batch(1000, schema.clone()) {
             writer.write(&batch).unwrap();
             //store.purge_converted(); // only after the writes succeeded
-            println!("Wrote Batch");
+            print!(".");
         }
+        println!("");
         writer.close().unwrap();
     }
 }
