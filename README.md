@@ -57,7 +57,10 @@ Conveniently available is the sender binary which transmits packets in the appro
 # Features Plot
 - [x] Refactor to remove rwlocked args struct (removing live plot/regren reconfiguration)
 - [ ] ~~Get entire program onto tokio instead of multi-thread+tokio~~
-- [ ] Refactor plotter core to read from column arrays instead of coppying
+- [x] Refactor plotter core to read from column arrays instead of coppying
+- [ ] Allow panning in plot
+- [ ] Horizontal shared crosshair
+- [ ] Horizontal shared drag to zoom
 - [ ] Change time_ms to a special column and change units to seconds
 - [ ] Much more effecient+organized struct for tracking columns
 - [ ] Improved GUI style and configurability

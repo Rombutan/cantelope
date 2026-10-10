@@ -78,27 +78,39 @@ impl TableStore {
         self.columns.write().expect("RwLock poisoned")
     }
 
-    /// O(log n) Lookback: Finds the index that represents exactly `period` seconds ago.
-    /// Ideal for real-time plotting windows.
-    pub fn find_index_back_by_period(&self, period: f64) -> usize {
-        let cols = self.columns.read().expect("lock poisoned");
-        let time_col = match &cols[0] {
-            GenericColumn::F64(c) => &c.values,
-            _ => panic!("Time column must be F64"),
+    /// Returns the first index in the time column whose value is >= `target`.
+    /// - Returns `len` if all samples are earlier than `target` (i.e. "past the end").
+    /// - Returns 0 if the table is empty or `target` precedes the first sample.
+    /// Assumes the time column is sorted ascending (see TODO below).
+    pub fn find_index_by_value(&self, target: f64) -> usize {
+        let cols = self.read_columns();
+        Self::index_by_value_locked(&cols, target)
+    }
+
+    /// Same search, for callers that already hold a read guard
+    /// (avoids re-locking and keeps the result consistent with later slicing).
+    pub fn index_by_value_locked(cols: &[GenericColumn], target: f64) -> usize {
+        let time_col = match cols.first() {
+            Some(GenericColumn::F64(c)) => &c.values,
+            Some(_) => panic!("Time column must be F64"),
+            None => return 0, // schema not populated yet
         };
 
-        if time_col.is_empty() {
+        // partition_point is a lower-bound binary search: O(log n), no unwrap,
+        // and with duplicate timestamps it deterministically returns the FIRST one
+        // (binary_search_by returns an arbitrary match among duplicates).
+        time_col.partition_point(|&t| t < target)
+    }
+
+    pub fn find_index_back_by_period(&self, period: f64) -> usize {
+        let cols = self.read_columns();
+        let Some(GenericColumn::F64(c)) = cols.first() else {
             return 0;
-        }
-
-        let current_time = time_col[time_col.len() - 1];
-        let target_time = current_time - period;
-
-        // Binary search handles irregular/dynamic step sizes
-        match time_col.binary_search_by(|probe| probe.partial_cmp(&target_time).unwrap()) {
-            Ok(idx) => idx,  // Exact match found
-            Err(idx) => idx, // Closest index following the target time
-        } // TODO - add gating to make sure time column never decreases. otherwise this gonna break
+        };
+        let Some(&current_time) = c.values.last() else {
+            return 0;
+        };
+        Self::index_by_value_locked(&cols, current_time - period)
     }
 
     pub fn get_plot_series<'a>(

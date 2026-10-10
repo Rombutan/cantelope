@@ -547,6 +547,7 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
             print!(".");
         }
         println!("");
+        println!("Done!");
         writer.close().unwrap();
     }
 }

@@ -10,14 +10,8 @@ use plotters_iced2::{Chart, ChartBuilder, ChartWidget};
 use std::collections::hash_map::DefaultHasher;
 use std::fmt::Write;
 use std::hash::{Hash, Hasher};
-use std::{
-    collections::{HashMap, VecDeque},
-    sync::{Arc, Mutex, mpsc::Receiver},
-    time::Instant,
-};
+use std::time::Instant;
 use std::{f64, usize};
-
-use itertools::Itertools;
 
 use crate::store;
 
@@ -39,6 +33,8 @@ pub struct PlotWindow {
     play: bool,
     time_range_text: String,
     x_window: f64,
+    x_end: f64,
+    x_live_attach: bool,
     theme_mode: iced::theme::Mode,
     theme: iced::Theme,
 }
@@ -48,6 +44,8 @@ pub enum Message {
     Tick,
     Pause,
     TimeRange(String),
+    Live(bool),
+    AdjustEndTime(f64),
     BumpTime(bool),
     PlotChanged((usize, String)),
     ThemeChanged(iced::theme::Mode),
@@ -95,6 +93,8 @@ impl PlotWindow {
                             play: true,
                             time_range_text: String::from("3000"),
                             x_window: 3000.0,
+                            x_end: 0.0,
+                            x_live_attach: true,
                             theme_mode: iced::theme::Mode::Light,
                             theme: mode_to_theme(&iced::theme::Mode::Light),
                         },
@@ -113,13 +113,10 @@ impl PlotWindow {
         .run()
     }
 
-    fn ingest_points(&mut self) {}
-
     fn update(&mut self, message: Message) {
         match message {
             Message::Tick => {
                 if self.play {
-                    self.ingest_points();
                     self.last_redraw = Instant::now();
                 }
             }
@@ -145,33 +142,63 @@ impl PlotWindow {
                 }
                 self.time_range_text = self.x_window.to_string();
             }
+            Message::Live(live) => {
+                if self.x_live_attach {
+                    if !live {
+                        self.x_live_attach = false;
+                    }
+                } else {
+                    if live {
+                        self.x_live_attach = true;
+                    }
+                }
+            }
+            Message::AdjustEndTime(adjustment) => {
+                if !self.x_live_attach {
+                    self.x_end += adjustment;
+                } else {
+                    self.x_live_attach = false;
+                    self.x_end =
+                        self.store.get_latest_valid_value_by_index(0).unwrap_or(0.0) + adjustment;
+                }
+            }
             Message::Nothing => {}
             _ => {}
         }
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        // 1. Your existing timer
         let timer = time::every(std::time::Duration::from_millis(1000 / 30)).map(|_| Message::Tick);
 
-        // 2. The keyboard listener
         let keyboard = keyboard::listen().map(|event| match event {
-            keyboard::Event::KeyPressed {
-                key: keyboard::Key::Named(keyboard::key::Named::Space),
-                ..
-            } => Message::Pause,
-            keyboard::Event::KeyPressed {
-                key: keyboard::Key::Named(keyboard::key::Named::Pause),
-                ..
-            } => Message::Pause,
-            keyboard::Event::KeyPressed {
-                key: keyboard::Key::Named(keyboard::key::Named::ArrowUp),
-                ..
-            } => Message::BumpTime(true),
-            keyboard::Event::KeyPressed {
-                key: keyboard::Key::Named(keyboard::key::Named::ArrowDown),
-                ..
-            } => Message::BumpTime(false),
+            keyboard::Event::KeyPressed { key, modifiers, .. } => {
+                use keyboard::key::Named;
+
+                // Horizontal panning only: ctrl = 10x, ctrl+shift = 100x
+                let h_mult = if modifiers.control() && modifiers.shift() {
+                    100.0
+                } else if modifiers.control() {
+                    10.0
+                } else {
+                    1.0
+                };
+
+                match key {
+                    keyboard::Key::Named(Named::Space) | keyboard::Key::Named(Named::Pause) => {
+                        Message::Pause
+                    }
+                    keyboard::Key::Named(Named::ArrowUp) => Message::BumpTime(true),
+                    keyboard::Key::Named(Named::ArrowDown) => Message::BumpTime(false),
+                    keyboard::Key::Named(Named::ArrowLeft) => {
+                        Message::AdjustEndTime(-100.0 * h_mult)
+                    }
+                    keyboard::Key::Named(Named::ArrowRight) => {
+                        Message::AdjustEndTime(100.0 * h_mult)
+                    }
+                    keyboard::Key::Named(Named::Enter) => Message::Live(true),
+                    _ => Message::Nothing,
+                }
+            }
             _ => Message::Nothing,
         });
 
@@ -218,6 +245,8 @@ impl PlotWindow {
                 ChartWidget::new(SignalChart {
                     store: self.store.clone_ref(),
                     time_range: &self.x_window,
+                    end_time: &self.x_end,
+                    live_attach: &self.x_live_attach,
                     // Pass the inner Vec<String> to the toplot field
                     toplot: plot_group.clone(),
                     theme: self.theme.clone(),
@@ -262,6 +291,8 @@ impl PlotWindow {
 struct SignalChart<'a> {
     store: store::TableStore,
     time_range: &'a f64,
+    end_time: &'a f64,
+    live_attach: &'a bool,
     toplot: Vec<String>,
     pub theme: iced::Theme,
 }
@@ -281,11 +312,17 @@ impl<'a> Chart<Message> for SignalChart<'a> {
         let stop_index;
         match &self.store.read_columns()[0] {
             store::GenericColumn::F64(c) => {
-                start_index = self
-                    .store
-                    .find_index_back_by_period(self.time_range.clone());
-
-                stop_index = c.len() - 1;
+                if self.live_attach.clone() {
+                    stop_index = c.len() - 1;
+                    start_index = self
+                        .store
+                        .find_index_back_by_period(self.time_range.clone());
+                } else {
+                    stop_index = self.store.find_index_by_value(self.end_time.clone());
+                    start_index = self
+                        .store
+                        .find_index_by_value(self.end_time.clone() - self.time_range.clone());
+                }
 
                 if stop_index > 0 {
                     min_x = c.values[start_index];
