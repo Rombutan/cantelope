@@ -24,6 +24,7 @@ pub struct TableStore {
     pub columns: Arc<RwLock<Vec<GenericColumn>>>,
     pub signalmap: Arc<RwLock<HashMap<String, usize>>>,
     ready_state: Arc<(Mutex<bool>, Condvar)>, // Ready is set once schema is complete. Once set, cannot be unset.
+    converted: Arc<Mutex<usize>>,
 }
 
 impl TableStore {
@@ -33,6 +34,7 @@ impl TableStore {
             columns: Arc::new(RwLock::new(Vec::new())),
             ready_state: Arc::new((Mutex::new(false), Condvar::new())),
             signalmap: Arc::new(RwLock::new(HashMap::new())),
+            converted: Arc::new(Mutex::new(0)),
         }
     }
 
@@ -62,6 +64,7 @@ impl TableStore {
             columns: Arc::clone(&self.columns),
             ready_state: Arc::clone(&self.ready_state),
             signalmap: Arc::clone(&self.signalmap),
+            converted: Arc::clone(&self.converted),
         }
     }
 
@@ -164,6 +167,71 @@ impl TableStore {
         let cols = self.columns.read().expect("lock poisoned");
         cols.get(col_idx)?.last_valid_value_as_f64()
     }
+
+    /// Copies the next `limit` unconverted rows (or all remaining if `limit` is None)
+    /// and advances the cursor. Returns None if there's nothing to take.
+    fn take_unconverted(&self, limit: Option<usize>) -> Option<Vec<GenericColumn>> {
+        let cols = self.read_columns(); // lock order: columns...
+        let mut cursor = self.converted.lock().expect("Mutex poisoned"); // ...then cursor
+
+        let nrows = cols.first().map_or(0, |c| c.len());
+        let available = nrows.saturating_sub(*cursor);
+        let take = match limit {
+            Some(n) if available >= n => n,
+            Some(_) => return None, // not enough for a full batch yet
+            None => available,
+        };
+        if take == 0 {
+            return None;
+        }
+
+        let start = *cursor;
+        let end = start + take;
+        let owned = cols.iter().map(|c| c.clone_range(start, end)).collect();
+        *cursor = end;
+        Some(owned)
+    } // both locks released here, before Arrow conversion
+
+    /// Returns the next full batch of exactly `n` fresh rows, or None if fewer are available.
+    pub fn next_record_batch(&self, n: usize, schema: Arc<Schema>) -> Option<RecordBatch> {
+        let owned = self.take_unconverted(Some(n))?;
+        Some(finish_record_batch(owned, schema))
+    }
+
+    /// Returns whatever unconverted rows remain (for shutdown).
+    pub fn flush_record_batch(&self, schema: Arc<Schema>) -> Option<RecordBatch> {
+        let owned = self.take_unconverted(None)?;
+        Some(finish_record_batch(owned, schema))
+    }
+
+    /// Removes the oldest `n` rows (clamped to table length). Returns rows removed.
+    /// Shifts the cursor down by the same amount.
+    pub fn purge_oldest(&self, n: usize) -> usize {
+        let mut cols = self.write_columns();
+        let mut cursor = self.converted.lock().expect("Mutex poisoned");
+        Self::purge_locked(&mut cols, &mut cursor, n)
+    }
+
+    /// Removes only rows that have already been converted.
+    pub fn purge_converted(&self) -> usize {
+        let mut cols = self.write_columns();
+        let mut cursor = self.converted.lock().expect("Mutex poisoned");
+        let n = *cursor;
+        Self::purge_locked(&mut cols, &mut cursor, n)
+    }
+
+    fn purge_locked(cols: &mut [GenericColumn], cursor: &mut usize, n: usize) -> usize {
+        let nrows = cols.first().map_or(0, |c| c.len());
+        let k = n.min(nrows);
+        if k == 0 {
+            return 0;
+        }
+        for c in cols.iter_mut() {
+            c.drop_front(k);
+        }
+        *cursor = cursor.saturating_sub(k);
+        k
+    }
 }
 
 pub struct Column<T> {
@@ -240,6 +308,20 @@ impl<T: Default + Copy> Column<T> {
             .map(|(idx, _)| idx)?;
 
         Some(self.values[valid_idx])
+    }
+
+    /// Owned copy of rows [start..end).
+    pub fn clone_range(&self, start: usize, end: usize) -> Column<T> {
+        Column {
+            values: self.values[start..end].to_vec(),
+            valid: self.valid[start..end].to_vec(),
+        }
+    }
+
+    /// Drops the oldest `n` rows.
+    pub fn drop_front(&mut self, n: usize) {
+        self.values.drain(..n);
+        self.valid.drain(..n);
     }
 }
 
@@ -442,6 +524,30 @@ impl GenericColumn {
             GenericColumn::I64(c) => c.last_valid_value().map(|v| v as f64),
             GenericColumn::F32(c) => c.last_valid_value().map(|v| v as f64),
             GenericColumn::F64(c) => c.last_valid_value(), // No cast needed
+        }
+    }
+
+    pub fn clone_range(&self, start: usize, end: usize) -> GenericColumn {
+        match self {
+            GenericColumn::Bool(c) => GenericColumn::Bool(c.clone_range(start, end)),
+            GenericColumn::I8(c) => GenericColumn::I8(c.clone_range(start, end)),
+            GenericColumn::I16(c) => GenericColumn::I16(c.clone_range(start, end)),
+            GenericColumn::I32(c) => GenericColumn::I32(c.clone_range(start, end)),
+            GenericColumn::I64(c) => GenericColumn::I64(c.clone_range(start, end)),
+            GenericColumn::F32(c) => GenericColumn::F32(c.clone_range(start, end)),
+            GenericColumn::F64(c) => GenericColumn::F64(c.clone_range(start, end)),
+        }
+    }
+
+    pub fn drop_front(&mut self, n: usize) {
+        match self {
+            GenericColumn::Bool(c) => c.drop_front(n),
+            GenericColumn::I8(c) => c.drop_front(n),
+            GenericColumn::I16(c) => c.drop_front(n),
+            GenericColumn::I32(c) => c.drop_front(n),
+            GenericColumn::I64(c) => c.drop_front(n),
+            GenericColumn::F32(c) => c.drop_front(n),
+            GenericColumn::F64(c) => c.drop_front(n),
         }
     }
 }

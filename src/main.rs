@@ -5,6 +5,9 @@ use toml::Table;
 
 // Arrow IP elements
 use arrow::datatypes::{DataType, Field, Schema};
+use parquet::arrow::ArrowWriter;
+use parquet::file::properties::WriterProperties;
+use std::fs::File;
 
 // Literally only for cleaner print
 use std::io::{self, Write};
@@ -525,7 +528,7 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
                         .get(signal.name)
                         .expect("Schema, map, or column vector poisoned")
                         .clone();
-                    if (is_filled.len() <= index){
+                    if (is_filled.len() <= index) {
                         println!("Signal out of range: {} at index: {}", signal.name, index);
                     }
                     if !is_filled[index] {
@@ -625,19 +628,21 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
     println!("");
 
     if args.en_ipm {
-        let arc: Arc<std::sync::RwLock<Vec<GenericColumn>>> = store.columns;
-        match Arc::try_unwrap(arc) {
-            Ok(lock) => {
-                let owned: Vec<GenericColumn> = lock.into_inner().unwrap();
-                let batch = store::finish_record_batch(owned, schema);
-                store::write_record_batch_to_parquet(&batch, &args.output).unwrap();
-                println!("Finished writting out!");
+        let props = WriterProperties::builder()
+            .set_compression(parquet::basic::Compression::SNAPPY)
+            .build();
+        let mut writer = ArrowWriter::try_new(
+            File::create(&args.output).unwrap(),
+            schema.clone(),
+            Some(props),
+        )
+        .unwrap();
+
+        loop {
+            while let Some(batch) = store.next_record_batch(1000, schema.clone()) {
+                writer.write(&batch).unwrap();
             }
-            Err(_arc) => {
-                // still other Arc clones alive somewhere — try_unwrap gives you
-                // the Arc back unchanged in this case
-                eprintln!("Arc still has other owners, can't take ownership");
-            }
+            //store.purge_converted(); // only after the writes succeeded
         }
     }
 }
