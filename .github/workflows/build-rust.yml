@@ -45,3 +45,11 @@ jobs:
     - name: Run Tests (x86_64 Linux only)
       if: matrix.target == 'x86_64-unknown-linux-gnu'
       run: cross test --target ${{ matrix.target }} --verbose --features plot
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: cantelope-${{ matrix.target }}
+        path: |
+          target/${{ matrix.target }}/release/cantelope
+          target/${{ matrix.target }}/release/cantelope.exe
+        if-no-files-found: error
