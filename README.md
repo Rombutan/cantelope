@@ -42,7 +42,7 @@ Conveniently available is the sender binary which transmits packets in the appro
   - `--tcp` tells cantelope to establish a tcp connection at specififed `ip:port`. Intended for use with sender and relay binaries.
   - `--udp` is not currently implemented. Behavior unknown.
 - `--output | -o` tells cantelope to store data and ultimately output a parquet file with the specified name. Data is limited to memory size for now.
-  - `--cache_ms | -c` will set the minimum time interval of rows outputted to parquet. Highly recommended.
+  - `--cache-ms | -c` will set the minimum time interval of rows outputted to parquet. Highly recommended.
 - GUI
   - Each `--plot | -p` argument will enable and add a plot to the plotting window. Specify which signals to put on the plot by comma (but not space) seperating their names.
   - A `--regrens | -rg` argument (only provide one!) will add each comma seperated inequality to the regrens row. The "true" state of the inequality is mapped to green.

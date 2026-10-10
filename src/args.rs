@@ -103,7 +103,7 @@ Options:                        If no options, use file picker for config.
                                 available to plotting subsystem.
   Output Options:
     [--output | -o f.parquet]   Enables output to provided parquet file.
-    [--cache_ms | -c n]         Sets minimum time between rows. n is integer.
+    [--cache-ms | -c n]         Sets minimum time between rows. n is integer.
     [--socketout socket]        Enabled immediate output of all recieved frames
                                 on provided socketcan interface. No windows.
 
@@ -205,7 +205,7 @@ pub fn process_args() -> Args {
                     .unwrap()
             }
 
-            "--cache_ms" | "-c" => {
+            "--cache-ms" | "-c" => {
                 args.cache_ms = argsi
                     .next()
                     .expect("--cache-ms requires a value")
