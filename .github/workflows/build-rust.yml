@@ -29,16 +29,18 @@ jobs:
       with:
         targets: ${{ matrix.target }}
 
+    # FIX: Install a pre-compiled cross binary via cargo-binstall to save 2-3 minutes of CI time
     - name: Install Cross-RS
       run: |
-        cargo install cross --git https://github.com
+        curl -L --proto '=https' --tlsv1.2 -sSf https://githubusercontent.com | sh
+        cargo binstall --deploy-ids cross -y
+
+      # ALTERNATIVE (If you strictly prefer Git compilation):
+      # run: cargo install cross --git https://github.com
 
     - name: Run Build via Cross
       run: cross build --target ${{ matrix.target }} --release --verbose --features plot
 
-    # Tests can only run natively on the host platform (Linux AMD64) 
-    # Cross-architecture tests require complex QEMU setups inside CI
     - name: Run Tests (AMD64 Linux Only)
       if: matrix.target == 'x86_64-unknown-linux-gnu'
       run: cross test --target ${{ matrix.target }} --verbose --features plot
-
