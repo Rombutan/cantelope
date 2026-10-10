@@ -1,6 +1,19 @@
-[target.aarch64-unknown-linux-gnu]
+# Cross.toml
+[target.x86_64-unknown-linux-gnu]
+image = "ghcr.io/cross-rs/x86_64-unknown-linux-gnu:edge"
 pre-build = [
-    "dpkg --add-architecture arm64",
-    "apt-get update",
-    "apt-get install --assume-yes libfontconfig1-dev:arm64"
+    "apt-get update && apt-get install --no-install-recommends -y libfontconfig1-dev"
 ]
+
+[target.aarch64-unknown-linux-gnu]
+image = "ghcr.io/cross-rs/aarch64-unknown-linux-gnu:edge"
+pre-build = [
+    "dpkg --add-architecture arm64 && apt-get update",
+    "apt-get install --no-install-recommends -y libfontconfig1-dev:arm64"
+]
+
+[target.x86_64-pc-windows-gnu]
+image = "ghcr.io/cross-rs/x86_64-pc-windows-gnu:edge"
+# Note: Windows builds typically bundle fonts or bypass fontconfig, 
+# but if a build script insists on it, you can handle it via custom matrices.
+
