@@ -347,9 +347,7 @@ impl<'a> Chart<Message> for SignalChart<'a> {
         };
         let mut chart_lines: Vec<(&String, LineSeries<DB, (f64, f64)>)> = vec![];
         for name in self.toplot.iter() {
-            let Ok(signal_map) = self.store.signalmap.read() else {
-                continue;
-            };
+            let signal_map = self.store.signalmap.read();
 
             let Some(&col_index) = signal_map.get(name) else {
                 continue;
@@ -498,13 +496,7 @@ impl<'a> SignalStatus {
         let latest_val = self
             .store
             .get_latest_valid_value_by_index(
-                self.store
-                    .signalmap
-                    .read()
-                    .unwrap()
-                    .get(&self.name)
-                    .unwrap()
-                    .clone(),
+                self.store.signalmap.read().get(&self.name).unwrap().clone(),
             )
             .unwrap_or(0.0);
 

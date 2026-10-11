@@ -211,7 +211,7 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
     let mut fields: Vec<Field> = Vec::new(); // vec of column descriptions, later dumped into Arc<Schema>
     let mut is_filled: Vec<bool> = Vec::new(); // This will keep track of which values have been filled so ones which haven't can be null balanced
 
-    let mut write_signalmap = store.signalmap.write().unwrap();
+    let mut write_signalmap = store.signalmap.write();
 
     let mut column_names = vec!["Time_ms"];
 
@@ -493,7 +493,6 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
                     let index = store
                         .signalmap
                         .read()
-                        .unwrap()
                         .get(signal.name)
                         .expect("Schema, map, or column vector poisoned")
                         .clone();

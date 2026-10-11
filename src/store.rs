@@ -9,7 +9,9 @@ use parquet::arrow::ArrowWriter;
 use parquet::file::properties::WriterProperties;
 use std::fs::File;
 
-use std::sync::{Arc, Condvar, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
 
 pub struct PlottableSeries<'a> {
     /// The zero-allocation zipped coordinate iterator
@@ -70,12 +72,22 @@ impl TableStore {
 
     /// Read columns (use this *after* wait_until_ready)
     pub fn read_columns(&self) -> RwLockReadGuard<'_, Vec<GenericColumn>> {
-        self.columns.read().expect("RwLock poisoned")
+        if let Some(read_guard) = self.columns.try_read_for(Duration::from_secs(1)) {
+            return read_guard;
+        } else {
+            println!("Timeout waiting for read lock");
+            panic!();
+        }
     }
 
     /// Write columns (used by the initializing thread)
     pub fn write_columns(&self) -> RwLockWriteGuard<'_, Vec<GenericColumn>> {
-        self.columns.write().expect("RwLock poisoned")
+        if let Some(write_guard) = self.columns.try_write_for(Duration::from_secs(1)) {
+            return write_guard;
+        } else {
+            println!("Timeout waiting for write lock");
+            panic!();
+        }
     }
 
     /// Returns the first index in the time column whose value is >= `target`.
@@ -176,7 +188,7 @@ impl TableStore {
 
     /// Looks up a column by index and finds the most recent non-null value, cast to f64.
     pub fn get_latest_valid_value_by_index(&self, col_idx: usize) -> Option<f64> {
-        let cols = self.columns.read().expect("lock poisoned");
+        let cols = self.read_columns();
         cols.get(col_idx)?.last_valid_value_as_f64()
     }
 

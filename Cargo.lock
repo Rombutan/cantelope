@@ -643,6 +643,7 @@ dependencies = [
  "iced_aw",
  "iced_web",
  "itertools 0.14.0",
+ "parking_lot",
  "parquet",
  "peak-can",
  "plotters",
