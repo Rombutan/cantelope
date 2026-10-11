@@ -13,7 +13,7 @@ pub struct CanWrapper {
 
 impl CanWrapper {
     /// Opens a PCAN-USB channel at the given baudrate
-    pub fn new(String: baudrate) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(baudrate: String) -> Result<Self, Box<dyn std::error::Error>> {
         let mut baud = Baudrate::Baud1M;
         match baudrate {
             "1000000" => {

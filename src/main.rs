@@ -330,7 +330,7 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
             panic!("Socketcan not enabled in this build")
         }
         #[cfg(feature = "peak-can")]
-        CanDataInput::Socket => {
+        CanDataInput::Peak => {
             input = InputSource::Peak(CanWrapper::new(&args.peakbaudrate).unwrap());
         }
         #[cfg(not(feature = "peak-can"))]
@@ -382,6 +382,11 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
         }
         #[cfg(feature = "socket")]
         InputSource::Can(ref mut socketwrapper) => {
+            socketwrapper.parse().unwrap();
+            time_start = socketwrapper.get_timestamp();
+        }
+        #[cfg(feature = "peak-can")]
+        InputSource::Peak(ref mut socketwrapper) => {
             socketwrapper.parse().unwrap();
             time_start = socketwrapper.get_timestamp();
         }
@@ -443,6 +448,13 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
             }
             #[cfg(feature = "socket")]
             InputSource::Can(ref mut socketwrapper) => {
+                socketwrapper.parse().unwrap();
+                timestamp = socketwrapper.get_timestamp();
+                id = socketwrapper.get_id();
+                data = socketwrapper.get_data();
+            }
+            #[cfg(feature = "peak-can")]
+            InputSource::Peak(ref mut socketwrapper) => {
                 socketwrapper.parse().unwrap();
                 timestamp = socketwrapper.get_timestamp();
                 id = socketwrapper.get_id();
