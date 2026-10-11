@@ -55,6 +55,9 @@ impl CanWrapper {
             "5000" => {
                 baud = Baudrate::Baud5K;
             }
+            _ => {
+                panic!("Baudrate illegal");
+            }
         }
 
         let socket = UsbCanSocket::open(UsbBus::USB1, baud)
