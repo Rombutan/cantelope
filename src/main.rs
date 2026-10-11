@@ -41,6 +41,9 @@ pub mod socketout;
 #[cfg(feature = "socket")]
 use socketout::CanOutWrapper;
 
+#[cfg(feature = "peak-can")]
+pub mod peakwrap;
+
 // Use ctrl+c as exit signal in stdin and socket mode
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{process, thread, time};
@@ -323,6 +326,14 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
         #[cfg(not(feature = "socket"))]
         CanDataInput::Socket => {
             panic!("Socketcan not enabled in this build")
+        }
+        #[cfg(feature = "peak-can")]
+        CanDataInput::Socket => {
+            input = InputSource::Peak(CanWrapper::new(&args.peakbaudrate).unwrap());
+        }
+        #[cfg(not(feature = "peak-can"))]
+        CanDataInput::Peak => {
+            panic!("Peak-Can not enabled in this build")
         }
         CanDataInput::TcpRemote => {
             input = InputSource::Tcp(tcpwrapper::TcpWrapper::new(&args.input));

@@ -644,6 +644,7 @@ dependencies = [
  "iced_web",
  "itertools 0.14.0",
  "parquet",
+ "peak-can",
  "plotters",
  "plotters-iced2",
  "rfd",
@@ -3335,6 +3336,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4500030c302e4af1d423f36f3b958d1aecb6c04184356ed5a833bf6b60435777"
 dependencies = [
  "rustc_version",
+]
+
+[[package]]
+name = "peak-can"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5bc96e6144a3875abef9eafe4e841059a4dea44a70585683e9560f85dbcd113c"
+dependencies = [
+ "libloading",
+ "peak-can-sys",
+]
+
+[[package]]
+name = "peak-can-sys"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a8f97c948e9782e0def40374d6e8fad3f4dceb00bdf555dc15f8a27c87efafe"
+dependencies = [
+ "libloading",
 ]
 
 [[package]]

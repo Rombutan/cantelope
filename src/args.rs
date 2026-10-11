@@ -8,6 +8,7 @@ pub enum CanDataInput {
     #[default]
     File,
     Socket,
+    Peak,
     Stdin,
     TcpRemote,
     UdpRemote,
@@ -28,6 +29,7 @@ pub struct Args {
     pub en_aux: bool,
     pub python: String,
     pub socketout: String,
+    pub peakbaudrate: String,
 }
 
 impl Args {
@@ -97,6 +99,8 @@ Options:                        If no options, use file picker for config.
     [--tcp ip:port]             Sets TCP client mode and server address.
     [--socket | -s can0]        Uses a socketcan interface for input,
                                 only available if compiled with option.
+    [--peak baudrate]           Uses system PEAK-CAN API. Must be installed
+                                and feature must be enabled at compile time.
   Python:
     [--python file.py]          Will instantiate and execute a class from
                                 that file on each row, and make that output
@@ -159,13 +163,28 @@ pub fn process_args() -> Args {
                 args.candatainput = CanDataInput::Socket;
                 args.input = argsi
                     .next()
-                    .expect("--tcp requires a value")
+                    .expect("--socket requires a value")
                     .parse()
                     .unwrap()
             }
 
             #[cfg(not(feature = "socket"))]
             "--socket" => {
+                panic!("Peak-Can feature disabled!")
+            }
+
+            #[cfg(feature = "peak-can")]
+            "--peak" => {
+                args.candatainput = CanDataInput::Peak;
+                args.peakbaudrate = argsi
+                    .next()
+                    .expect("--peak requires a value")
+                    .parse()
+                    .unwrap()
+            }
+
+            #[cfg(not(feature = "peak-can"))]
+            "--peak" => {
                 panic!("Socketcan feature disabled!")
             }
 
