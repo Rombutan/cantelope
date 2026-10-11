@@ -331,7 +331,7 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
         }
         #[cfg(feature = "peak-can")]
         CanDataInput::Peak => {
-            input = InputSource::Peak(CanWrapper::new(&args.peakbaudrate).unwrap());
+            input = InputSource::Peak(peakwrap::CanWrapper::new(&args.peakbaudrate).unwrap());
         }
         #[cfg(not(feature = "peak-can"))]
         CanDataInput::Peak => {
