@@ -308,39 +308,43 @@ impl<'a> Chart<Message> for SignalChart<'a> {
     fn build_chart<DB: DrawingBackend>(&self, state: &Self::State, mut builder: ChartBuilder<DB>) {
         _ = state;
 
-        let min_x;
-        let max_x;
         let mut max_y: f64 = -100000.0;
         let mut min_y: f64 = 100000.0;
 
-        let start_index;
-        let stop_index;
-        match &self.store.read_columns()[0] {
-            store::GenericColumn::F64(c) => {
-                if self.live_attach.clone() {
-                    stop_index = c.len() - 1;
-                    start_index = self
-                        .store
-                        .find_index_back_by_period(self.time_range.clone());
-                } else {
-                    stop_index = self.store.find_index_by_value(self.end_time.clone());
-                    start_index = self
-                        .store
-                        .find_index_by_value(self.end_time.clone() - self.time_range.clone());
-                }
-
-                if stop_index > 0 {
-                    min_x = c.values[start_index];
-                    max_x = c.values[stop_index];
-                } else {
-                    min_x = 0.0;
-                    max_x = 0.0;
-                }
-            }
-            _ => panic!("Time column must be F64"),
-        };
-
+        // Take the read lock ONCE. Everything below (index lookups and plotting)
+        // uses this same guard, so we never re-lock while already holding it.
         let columns = self.store.read_columns();
+
+        let (start_index, stop_index, min_x, max_x) = match columns.first() {
+            Some(store::GenericColumn::F64(c)) if !c.values.is_empty() => {
+                let last = c.len() - 1;
+
+                let (start, stop) = if *self.live_attach {
+                    // Live: window ends at the newest sample.
+                    let now = c.values[last];
+                    let start =
+                        store::TableStore::index_by_value_locked(&columns, now - *self.time_range);
+                    (start, last)
+                } else {
+                    // Historical: window ends at end_time.
+                    let start = store::TableStore::index_by_value_locked(
+                        &columns,
+                        *self.end_time - *self.time_range,
+                    );
+                    let stop = store::TableStore::index_by_value_locked(&columns, *self.end_time);
+                    (start, stop)
+                };
+
+                // index_by_value_locked can return len (past the end), so clamp.
+                let start = start.min(last);
+                let stop = stop.min(last);
+
+                (start, stop, c.values[start], c.values[stop])
+            }
+            // Time column exists but has no rows yet, or schema not populated.
+            Some(store::GenericColumn::F64(_)) | None => (0, 0, 0.0, 0.0),
+            Some(_) => panic!("Time column must be F64"),
+        };
         let mut chart_lines: Vec<(&String, LineSeries<DB, (f64, f64)>)> = vec![];
         for name in self.toplot.iter() {
             let Ok(signal_map) = self.store.signalmap.read() else {
