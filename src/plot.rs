@@ -1,7 +1,8 @@
 use iced::Alignment::Center;
 use iced::{
     Background, Element, Length, Size, Subscription, Theme, keyboard, time, widget::Button,
-    widget::Column, widget::Row, widget::Text, widget::text_input,
+    widget::Column, widget::Row, widget::Text, widget::responsive, widget::scrollable,
+    widget::text_input,
 };
 
 use iced::widget::{container, text};
@@ -17,6 +18,9 @@ use crate::store;
 
 use crate::args;
 use args::Args;
+
+const MIN_PLOT_HEIGHT: f32 = 150.0; // smallest a plot is allowed to get
+const PLOT_SPACING: f32 = 5.0;
 
 fn int_from_str(name: &str) -> usize {
     let mut hasher = DefaultHasher::new();
@@ -139,6 +143,8 @@ impl PlotWindow {
                 } else if self.x_window > 1100.0 {
                     // Minimum time is 100 msec I guess
                     self.x_window = self.x_window - 1000.0;
+                } else if self.x_window > 200.0 {
+                    self.x_window = self.x_window - 100.0;
                 }
                 self.time_range_text = self.x_window.to_string();
             }
@@ -242,34 +248,39 @@ impl PlotWindow {
                     )
                 });
 
-        let charts: Vec<Element<Message>> = self
-            .args
-            .plots
-            .iter()
-            .map(|plot_group| {
-                ChartWidget::new(SignalChart {
-                    store: self.store.clone_ref(),
-                    time_range: &self.x_window,
-                    end_time: &self.x_end,
-                    live_attach: &self.x_live_attach,
-                    // Pass the inner Vec<String> to the toplot field
-                    toplot: plot_group.clone(),
-                    theme: self.theme.clone(),
-                })
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into() // Convert each ChartWidget into a generic Element
-            })
-            .collect();
+        let plots = responsive(move |size| {
+            let n = self.args.plots.len().max(1) as f32;
+
+            // Height each plot would get if they all shared the space evenly
+            let fit_height = (size.height - PLOT_SPACING * (n - 1.0)) / n;
+            let plot_height = fit_height.floor().max(MIN_PLOT_HEIGHT);
+
+            let charts = self.args.plots.iter().map(|plot_group| {
+                Element::from(
+                    ChartWidget::new(SignalChart {
+                        store: self.store.clone_ref(),
+                        time_range: &self.x_window,
+                        end_time: &self.x_end,
+                        live_attach: &self.x_live_attach,
+                        toplot: plot_group.clone(),
+                        theme: self.theme.clone(),
+                    })
+                    .width(Length::Fill)
+                    .height(Length::Fixed(plot_height)),
+                )
+            });
+
+            scrollable(Column::with_children(charts).spacing(PLOT_SPACING)).into()
+        });
 
         #[cfg(not(feature = "no_control_row"))]
         let content = Column::new()
-            .spacing(5) // Optional: adds a gap between your charts
+            .spacing(5)
             .width(Length::Fill)
             .height(Length::Fill)
             .push(controls)
             .push(status_row)
-            .push(Column::with_children(charts).spacing(5));
+            .push(plots);
 
         #[cfg(feature = "no_control_row")]
         let content = Column::new()
@@ -277,7 +288,7 @@ impl PlotWindow {
             .width(Length::Fill)
             .height(Length::Fill)
             .push(status_row)
-            .push(Column::with_children(charts).spacing(5));
+            .push(plots);
 
         content.into()
     }

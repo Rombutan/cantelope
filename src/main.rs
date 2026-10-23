@@ -85,6 +85,24 @@ enum InputSource {
 }
 
 fn main() {
+    std::thread::spawn(|| {
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            let deadlocks = parking_lot::deadlock::check_deadlock();
+            if deadlocks.is_empty() {
+                continue;
+            }
+            // Write to a file, not the console, in case the console is what's stuck.
+            let mut f = std::fs::File::create("deadlock.txt").unwrap();
+            for (i, threads) in deadlocks.iter().enumerate() {
+                writeln!(f, "Deadlock #{i}").unwrap();
+                for t in threads {
+                    writeln!(f, "Thread {:?}\n{:#?}", t.thread_id(), t.backtrace()).unwrap();
+                }
+            }
+        }
+    });
+
     let mut start_args: Args;
 
     if env::args().len() == 1 {
