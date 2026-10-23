@@ -273,20 +273,11 @@ impl PlotWindow {
             scrollable(Column::with_children(charts).spacing(PLOT_SPACING)).into()
         });
 
-        #[cfg(not(feature = "no_control_row"))]
         let content = Column::new()
             .spacing(5)
             .width(Length::Fill)
             .height(Length::Fill)
             .push(controls)
-            .push(status_row)
-            .push(plots);
-
-        #[cfg(feature = "no_control_row")]
-        let content = Column::new()
-            .spacing(1)
-            .width(Length::Fill)
-            .height(Length::Fill)
             .push(status_row)
             .push(plots);
 
