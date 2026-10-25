@@ -1,9 +1,10 @@
 use iced::Alignment::Center;
 use iced::{
-    Background, Element, Length, Padding, Size, Subscription, Theme, keyboard, time,
-    widget::Button, widget::Column, widget::Row, widget::Text, widget::responsive,
+    Background, Element, Length, Padding, Size, Subscription, Theme, alignment, keyboard, time,
+    widget::Button, widget::Column, widget::Row, widget::Text, widget::responsive, widget::rule,
     widget::scrollable, widget::text_input,
 };
+use iced_aw::{helpers::card, style};
 
 use iced::widget::{container, text};
 use plotters::prelude::*;
@@ -284,20 +285,28 @@ impl PlotWindow {
         });
 
         let tables = {
-            // HashMap iteration order is random, so sort to keep the layout stable between frames
             let nodes = self.store.nodes.read();
             let mut node_names: Vec<_> = nodes.keys().collect();
             node_names.sort();
 
-            let node_tables = node_names
-                .into_iter()
-                .map(|name| NodeTable::new(name.to_string(), self.store.clone_ref()).view());
+            let cells = node_names.into_iter().map(|name| -> Element<'_, Message> {
+                container(
+                    NodeTable::new(name.to_string(), self.store.clone_ref(), self.theme.clone())
+                        .view(),
+                )
+                .width(Length::Shrink)
+                .clip(true)
+                .into()
+            });
 
             scrollable(
-                Column::with_children(node_tables)
-                    .spacing(12.0)
-                    .width(Length::Fill),
+                Row::with_children(cells)
+                    .spacing(15)
+                    .align_y(alignment::Vertical::Top)
+                    .wrap()
+                    .vertical_spacing(15),
             )
+            .width(Length::Fill)
             .height(Length::Fill)
         };
 
@@ -305,7 +314,8 @@ impl PlotWindow {
             .spacing(5)
             .width(Length::Fill)
             .height(Length::Fill)
-            .push(controls);
+            .push(controls)
+            .push(status_row);
 
         let content = match self.current_tab {
             Tab::Plot => content.push(plots),
@@ -571,18 +581,22 @@ struct NodeTable {
     // The specific signal name to look up
     name: String,
     store: TableStore,
+    theme: iced::Theme,
 }
 
 impl<'a> NodeTable {
-    pub fn new(name: String, store: TableStore) -> Self {
+    pub fn new(name: String, store: TableStore, theme: iced::Theme) -> Self {
         Self {
             name: name,
             store: store,
+            theme: theme,
         }
     }
     pub fn view(&self) -> Element<'a, Message> {
         // Node name, larger than the 12pt message text
-        let title = text(self.name.clone()).size(20);
+        let title = text(self.name.clone())
+            .size(16)
+            .color(self.theme.palette().text);
 
         // Clone the node's messages out so the read lock is released right away
         let node_messages: Vec<dbc_rs::Message> = self
@@ -593,67 +607,142 @@ impl<'a> NodeTable {
             .cloned()
             .unwrap_or_default();
 
-        // One MessageTable per message, stacked vertically
         let messages = node_messages
             .into_iter()
             .fold(Column::new().spacing(4), |col, msg| {
-                col.push(MessageTable::new(msg, self.store.clone_ref()).view())
-            });
+                col.push(MessageTable::new(msg, self.store.clone_ref(), self.theme.clone()).view())
+            })
+            .width(Length::Shrink); // after the fold, not before
 
-        // Indent the message column
-        let indented = container(messages).padding(Padding {
-            top: 0.0,
-            right: 0.0,
-            bottom: 0.0,
-            left: 20.0,
-        });
+        let palette = self.theme.extended_palette();
+        let body_bg = palette.background.base.color;
+        let body_text = palette.background.base.text;
+        let head_bg = palette.background.strong.color;
+        let head_text = palette.background.strong.text;
 
-        let content = Column::new()
-            .spacing(5)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .push(title)
-            .push(indented);
+        let card_style = move |theme: &Theme, status: iced_aw::card::Status| style::card::Style {
+            background: body_bg.into(),
+            border_color: head_bg,
+            head_background: head_bg.into(),
+            head_text_color: head_text,
+            body_background: body_bg.into(),
+            body_text_color: body_text,
+            ..style::card::dark(theme, status)
+        };
 
-        content.into()
+        let element: Element<'_, Message> = card(title, messages)
+            .style(card_style)
+            .padding_head(Padding::new(6.0)) // head padding
+            .padding_body(Padding::new(6.0)) // replaces your manual indent container
+            .width(Length::Fill) // fills the fixed-width cell from the top-level layout
+            .height(Length::Shrink)
+            .into();
+
+        element
     }
 }
 
 struct MessageTable {
     message: dbc_rs::Message,
     store: TableStore,
+    theme: iced::Theme,
 }
 
 impl<'a> MessageTable {
-    pub fn new(message: dbc_rs::Message, store: TableStore) -> Self {
+    pub fn new(message: dbc_rs::Message, store: TableStore, theme: iced::Theme) -> Self {
         Self {
             message: message,
             store: store,
+            theme: theme,
         }
     }
     pub fn view(&self) -> Element<'a, Message> {
-        let mut text_content: String = self.message.name().to_string();
-        for signal in self.message.signals().iter() {
-            text_content.push_str(
-                format!(
-                    "{} |  Value: {:.2}\n",
-                    signal,
+        let text_color = self.theme.palette().text;
+
+        let title = text(self.message.name().to_string())
+            .size(14)
+            .color(text_color);
+
+        let mut names = Column::new().spacing(4);
+        let mut values = Column::new()
+            .spacing(4)
+            .align_x(alignment::Horizontal::Right);
+
+        let signal_list = self.message.signals();
+        let last = signal_list.len().saturating_sub(1);
+
+        for (i, signal) in signal_list.iter().enumerate() {
+            let value = self
+                .store
+                .get_latest_valid_value_by_index(
                     self.store
-                        .get_latest_valid_value_by_index(
-                            self.store
-                                .signalmap
-                                .read()
-                                .get(signal.name())
-                                .unwrap()
-                                .clone()
-                        )
-                        .unwrap_or(0.0f64)
+                        .signalmap
+                        .read()
+                        .get(signal.name())
+                        .unwrap()
+                        .clone(),
                 )
-                .as_str(),
-            )
+                .unwrap_or(0.0f64);
+
+            // Gap lives inside the name cell, so the rule below spans it
+            names = names.push(
+                container(text(signal.name().to_string()).size(12).color(text_color)).padding(
+                    Padding {
+                        top: 0.0,
+                        right: 16.0,
+                        bottom: 0.0,
+                        left: 0.0,
+                    },
+                ),
+            );
+            values = values.push(text(format!("{:.2}", value)).size(12).color(text_color));
+
+            let rule_color = self.theme.extended_palette().background.strong.color;
+            if i != last {
+                // Same rule in both columns so heights stay in sync
+                names = names.push(
+                    rule::horizontal(1).style(move |_theme: &Theme| rule::Style {
+                        color: rule_color,
+                        radius: 0.0.into(),
+                        fill_mode: rule::FillMode::Full,
+                        snap: true,
+                    }),
+                );
+                values =
+                    values.push(
+                        rule::horizontal(1).style(move |_theme: &Theme| rule::Style {
+                            color: rule_color,
+                            radius: 0.0.into(),
+                            fill_mode: rule::FillMode::Full,
+                            snap: true,
+                        }),
+                    );
+            }
         }
-        container(text(text_content).size(12).color(iced::Color::WHITE))
-            .padding(10)
+
+        let signals = Row::new().push(names).push(values);
+
+        let indented = container(signals)
+            .width(Length::Shrink) // after container::new
+            .padding(Padding {
+                top: 0.0,
+                right: 0.0,
+                bottom: 0.0,
+                left: 20.0,
+            });
+
+        Column::new()
+            .spacing(5)
+            .push(title)
+            .push(indented)
+            .padding(Padding {
+                top: 0.0,
+                right: 0.0,
+                bottom: 0.0,
+                left: 5.0,
+            })
+            .width(Length::Shrink) // replaces Length::Fill
+            .height(Length::Shrink) // replaces Length::Fill
             .into()
     }
 }
