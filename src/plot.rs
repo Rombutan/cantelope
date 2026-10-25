@@ -307,14 +307,10 @@ impl PlotWindow {
             .height(Length::Fill)
             .push(controls);
 
-        match self.current_tab {
-            Tab::Plot => {
-                content.push(plots);
-            }
-            Tab::Signals => {
-                content.push(tables);
-            }
-        }
+        let content = match self.current_tab {
+            Tab::Plot => content.push(plots),
+            Tab::Signals => content.push(tables),
+        };
 
         content.into()
     }
