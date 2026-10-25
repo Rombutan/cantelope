@@ -2,6 +2,8 @@ use arrow::array::*;
 use arrow::buffer::{BooleanBuffer, NullBuffer};
 use arrow::datatypes::*;
 use arrow::record_batch::RecordBatch;
+use dbc_rs::Message;
+use iced::widget::toggler::default;
 
 use std::collections::HashMap;
 
@@ -25,6 +27,7 @@ pub struct TableStore {
     // but only one thread can mutate at a time.
     pub columns: Arc<RwLock<Vec<GenericColumn>>>,
     pub signalmap: Arc<RwLock<HashMap<String, usize>>>,
+    pub nodes: Arc<RwLock<HashMap<String, Vec<Message>>>>,
     ready_state: Arc<(Mutex<bool>, Condvar)>, // Ready is set once schema is complete. Once set, cannot be unset.
     converted: Arc<Mutex<usize>>,
 }
@@ -35,6 +38,7 @@ impl TableStore {
         Self {
             columns: Arc::new(RwLock::new(Vec::new())),
             ready_state: Arc::new((Mutex::new(false), Condvar::new())),
+            nodes: Arc::new(RwLock::new(HashMap::new())),
             signalmap: Arc::new(RwLock::new(HashMap::new())),
             converted: Arc::new(Mutex::new(0)),
         }
@@ -65,6 +69,7 @@ impl TableStore {
         Self {
             columns: Arc::clone(&self.columns),
             ready_state: Arc::clone(&self.ready_state),
+            nodes: Arc::clone(&self.nodes),
             signalmap: Arc::clone(&self.signalmap),
             converted: Arc::clone(&self.converted),
         }

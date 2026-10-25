@@ -1,8 +1,8 @@
 use iced::Alignment::Center;
 use iced::{
-    Background, Element, Length, Size, Subscription, Theme, keyboard, time, widget::Button,
-    widget::Column, widget::Row, widget::Text, widget::responsive, widget::scrollable,
-    widget::text_input,
+    Background, Element, Length, Padding, Size, Subscription, Theme, keyboard, time,
+    widget::Button, widget::Column, widget::Row, widget::Text, widget::responsive,
+    widget::scrollable, widget::text_input,
 };
 
 use iced::widget::{container, text};
@@ -14,7 +14,7 @@ use std::hash::{Hash, Hasher};
 use std::time::Instant;
 use std::{f64, usize};
 
-use crate::store;
+use crate::store::{self, TableStore};
 
 use crate::args;
 use args::Args;
@@ -272,13 +272,32 @@ impl PlotWindow {
             scrollable(Column::with_children(charts).spacing(PLOT_SPACING)).into()
         });
 
+        let tables = {
+            // HashMap iteration order is random, so sort to keep the layout stable between frames
+            let nodes = self.store.nodes.read();
+            let mut node_names: Vec<_> = nodes.keys().collect();
+            node_names.sort();
+
+            let node_tables = node_names
+                .into_iter()
+                .map(|name| NodeTable::new(name.to_string(), self.store.clone_ref()).view());
+
+            scrollable(
+                Column::with_children(node_tables)
+                    .spacing(12.0)
+                    .width(Length::Fill),
+            )
+            .height(Length::Fill)
+        };
+
         let content = Column::new()
             .spacing(5)
             .width(Length::Fill)
             .height(Length::Fill)
             .push(controls)
             .push(status_row)
-            .push(plots);
+            .push(plots)
+            .push(tables);
 
         content.into()
     }
@@ -532,5 +551,96 @@ impl<'a> SignalStatus {
             style
         })
         .into()
+    }
+}
+
+struct NodeTable {
+    // The specific signal name to look up
+    name: String,
+    store: TableStore,
+}
+
+impl<'a> NodeTable {
+    pub fn new(name: String, store: TableStore) -> Self {
+        Self {
+            name: name,
+            store: store,
+        }
+    }
+    pub fn view(&self) -> Element<'a, Message> {
+        // Node name, larger than the 12pt message text
+        let title = text(self.name.clone()).size(20);
+
+        // Clone the node's messages out so the read lock is released right away
+        let node_messages: Vec<dbc_rs::Message> = self
+            .store
+            .nodes
+            .read()
+            .get(self.name.as_str())
+            .cloned()
+            .unwrap_or_default();
+
+        // One MessageTable per message, stacked vertically
+        let messages = node_messages
+            .into_iter()
+            .fold(Column::new().spacing(4), |col, msg| {
+                col.push(MessageTable::new(msg, self.store.clone_ref()).view())
+            });
+
+        // Indent the message column
+        let indented = container(messages).padding(Padding {
+            top: 0.0,
+            right: 0.0,
+            bottom: 0.0,
+            left: 20.0,
+        });
+
+        let content = Column::new()
+            .spacing(5)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .push(title)
+            .push(indented);
+
+        content.into()
+    }
+}
+
+struct MessageTable {
+    message: dbc_rs::Message,
+    store: TableStore,
+}
+
+impl<'a> MessageTable {
+    pub fn new(message: dbc_rs::Message, store: TableStore) -> Self {
+        Self {
+            message: message,
+            store: store,
+        }
+    }
+    pub fn view(&self) -> Element<'a, Message> {
+        let mut text_content: String = self.message.name().to_string();
+        for signal in self.message.signals().iter() {
+            text_content.push_str(
+                format!(
+                    "{} |  Value: {:.2}\n",
+                    signal,
+                    self.store
+                        .get_latest_valid_value_by_index(
+                            self.store
+                                .signalmap
+                                .read()
+                                .get(signal.name())
+                                .unwrap()
+                                .clone()
+                        )
+                        .unwrap_or(0.0f64)
+                )
+                .as_str(),
+            )
+        }
+        container(text(text_content).size(12).color(iced::Color::WHITE))
+            .padding(10)
+            .into()
     }
 }

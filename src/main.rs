@@ -1,5 +1,5 @@
 // DBC Parsing
-use dbc_rs::Dbc;
+use dbc_rs::{Dbc, Message};
 use std::fs;
 
 // Arrow IP elements
@@ -13,6 +13,7 @@ use std::io::{self, Write};
 
 // Custom data storage helpers
 pub mod store;
+use std::collections::HashMap;
 use store::{Column, GenericColumn, TableStore};
 
 // Custom argument parsing
@@ -50,7 +51,6 @@ use std::{process, thread, time};
 #[cfg(feature = "plot")]
 pub mod plot;
 
-#[cfg(feature = "plot")]
 #[cfg(feature = "plot")]
 use plot::PlotWindow;
 
@@ -245,8 +245,20 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
 
     is_filled.push(true); // This element of the map won't actually be used, but is needed for indecies to align. Corresponds to Time_ms
 
+    let mut nodes: HashMap<String, Vec<Message>> = Default::default(); // This will store messages in association with the node they are from, for use by plot. Store and schema are still flat.
+    for node in dbc.nodes().iter() {
+        println!("{}", node);
+        if nodes.insert(node.to_string(), vec![]).is_some() {
+            panic!("Duplicate node: {}", node);
+        }
+    }
+
     let mut index_counter: usize = 0;
     for message in dbc.messages().iter() {
+        nodes
+            .entry(message.sender().to_string())
+            .or_default()
+            .push(message.clone());
         for signal in message.signals().iter() {
             index_counter += 1;
             write_signalmap.insert(signal.name().to_string(), index_counter);
@@ -319,6 +331,11 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
             }
         }
     }
+
+    let mut _nodes = store.nodes.write();
+    *_nodes = nodes;
+    drop(_nodes);
+
     drop(write_signalmap);
     println!("\nBasis row size: {} bits", base_row_size);
 
