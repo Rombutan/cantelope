@@ -1,7 +1,6 @@
 // DBC Parsing
 use dbc_rs::Dbc;
 use std::fs;
-use toml::Table;
 
 // Arrow IP elements
 use arrow::datatypes::{DataType, Field, Schema};
@@ -368,10 +367,6 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
     println!("Input created!");
 
     #[cfg(feature = "socket")]
-    let mut outsocket: CanOutWrapper;
-    let use_outsocket: bool;
-
-    #[cfg(feature = "socket")]
     let use_outsocket = !args.socketout.is_empty();
 
     #[cfg(feature = "socket")]
@@ -497,7 +492,7 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
         {
             if use_outsocket {
                 if let Some(ref mut socket) = outsocket {
-                    socket.send(id, &data);
+                    _ = socket.send(id, &data);
                 }
             }
         }
@@ -514,7 +509,7 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
                         .get(signal.name)
                         .expect("Schema, map, or column vector poisoned")
                         .clone();
-                    if (is_filled.len() <= index) {
+                    if is_filled.len() <= index {
                         println!("Signal out of range: {} at index: {}", signal.name, index);
                     }
                     if !is_filled[index] {
@@ -542,7 +537,7 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
             if ((&args.cache_ms * f64::from(num_chunks) + offset) - relative_time_rcv)
                 > 2.0 * &args.cache_ms
             {
-                offset += ((&args.cache_ms * f64::from(num_chunks) + offset) - relative_time_rcv);
+                offset += (&args.cache_ms * f64::from(num_chunks) + offset) - relative_time_rcv;
             }
 
             num_chunks += 1;

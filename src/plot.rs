@@ -219,7 +219,6 @@ impl PlotWindow {
     fn view(&self) -> Element<'_, Message> {
         use iced::widget::row;
 
-        #[cfg(not(feature = "no_control_row"))]
         let controls = Row::new()
             .spacing(10)
             .padding(10)

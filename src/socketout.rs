@@ -1,4 +1,4 @@
-use socketcan::{CanFrame, CanSocket, EmbeddedFrame, ExtendedId, Frame, Id, Socket, StandardId};
+use socketcan::{CanFrame, CanSocket, EmbeddedFrame, ExtendedId, Id, Socket, StandardId};
 
 pub struct CanOutWrapper {
     socket: CanSocket,
