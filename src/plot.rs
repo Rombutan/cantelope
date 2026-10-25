@@ -30,6 +30,13 @@ fn int_from_str(name: &str) -> usize {
     // Use modulo to pick an index safely
     hash as usize
 }
+
+#[derive(Debug, Clone)]
+enum Tab {
+    Plot,
+    Signals,
+}
+
 pub struct PlotWindow {
     store: store::TableStore,
     last_redraw: Instant,
@@ -41,6 +48,7 @@ pub struct PlotWindow {
     x_live_attach: bool,
     theme_mode: iced::theme::Mode,
     theme: iced::Theme,
+    current_tab: Tab,
 }
 
 #[derive(Debug, Clone)]
@@ -53,6 +61,7 @@ pub enum Message {
     BumpTime(bool),
     PlotChanged((usize, String)),
     ThemeChanged(iced::theme::Mode),
+    SetTab(Tab),
     Nothing,
 }
 
@@ -100,6 +109,7 @@ impl PlotWindow {
                             x_end: 0.0,
                             x_live_attach: true,
                             theme_mode: iced::theme::Mode::Light,
+                            current_tab: Tab::Plot,
                             theme: mode_to_theme(&iced::theme::Mode::Light),
                         },
                         iced::system::theme().map(Message::ThemeChanged),
@@ -123,9 +133,6 @@ impl PlotWindow {
                 if self.play {
                     self.last_redraw = Instant::now();
                 }
-            }
-            Message::Pause => {
-                self.play = !self.play;
             }
             Message::TimeRange(value) => {
                 self.time_range_text = value;
@@ -172,6 +179,9 @@ impl PlotWindow {
                 if self.x_end >= self.store.get_latest_valid_value_by_index(0).unwrap_or(0.0) {
                     self.x_end = self.store.get_latest_valid_value_by_index(0).unwrap_or(0.0);
                 }
+            }
+            Message::SetTab(tab) => {
+                self.current_tab = tab;
             }
             Message::Nothing => {}
             _ => {}
@@ -222,7 +232,8 @@ impl PlotWindow {
         let controls = Row::new()
             .spacing(10)
             .padding(10)
-            .push(Button::new("Pause").on_press(Message::Pause))
+            .push(Button::new("Plots").on_press(Message::SetTab(Tab::Plot)))
+            .push(Button::new("Signals").on_press(Message::SetTab(Tab::Signals)))
             .push(Text::new(format!("Period(ms):")).align_y(Center))
             .push(
                 text_input("3000", &self.time_range_text)
@@ -294,10 +305,16 @@ impl PlotWindow {
             .spacing(5)
             .width(Length::Fill)
             .height(Length::Fill)
-            .push(controls)
-            .push(status_row)
-            .push(plots)
-            .push(tables);
+            .push(controls);
+
+        match self.current_tab {
+            Tab::Plot => {
+                content.push(plots);
+            }
+            Tab::Signals => {
+                content.push(tables);
+            }
+        }
 
         content.into()
     }
