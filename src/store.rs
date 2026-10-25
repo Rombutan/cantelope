@@ -15,6 +15,13 @@ use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
+#[derive(Debug, Clone)]
+pub struct MessageSend {
+    pub name: String,
+    pub content: Vec<(Box<str>, f64)>,
+    pub repeat: usize,
+}
+
 pub struct PlottableSeries<'a> {
     /// The zero-allocation zipped coordinate iterator
     pub coords: Box<dyn Iterator<Item = (f64, f64)> + 'a>,
@@ -28,6 +35,7 @@ pub struct TableStore {
     pub columns: Arc<RwLock<Vec<GenericColumn>>>,
     pub signalmap: Arc<RwLock<HashMap<String, usize>>>,
     pub nodes: Arc<RwLock<HashMap<String, Vec<Message>>>>,
+    pub sends: Arc<RwLock<Vec<MessageSend>>>,
     ready_state: Arc<(Mutex<bool>, Condvar)>, // Ready is set once schema is complete. Once set, cannot be unset.
     converted: Arc<Mutex<usize>>,
 }
@@ -40,6 +48,7 @@ impl TableStore {
             ready_state: Arc::new((Mutex::new(false), Condvar::new())),
             nodes: Arc::new(RwLock::new(HashMap::new())),
             signalmap: Arc::new(RwLock::new(HashMap::new())),
+            sends: Arc::new(RwLock::new(Vec::new())),
             converted: Arc::new(Mutex::new(0)),
         }
     }
@@ -71,6 +80,7 @@ impl TableStore {
             ready_state: Arc::clone(&self.ready_state),
             nodes: Arc::clone(&self.nodes),
             signalmap: Arc::clone(&self.signalmap),
+            sends: Arc::clone(&self.sends),
             converted: Arc::clone(&self.converted),
         }
     }

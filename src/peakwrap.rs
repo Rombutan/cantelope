@@ -96,6 +96,15 @@ impl CanWrapper {
         Ok(())
     }
 
+    pub fn send(&self, id: u32, data: Vec<u8>) {
+        let frame: CanFrame = CanFrame::new(
+            socketcan::Id::Standard(embedded_can::StandardId::new(id as u16).unwrap()),
+            &data,
+        )
+        .unwrap();
+        self.socket.write_frame(&frame).unwrap()
+    }
+
     pub fn get_timestamp(&self) -> f64 {
         self.last_timestamp
     }

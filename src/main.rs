@@ -14,7 +14,7 @@ use std::io::{self, Write};
 // Custom data storage helpers
 pub mod store;
 use std::collections::HashMap;
-use store::{Column, GenericColumn, TableStore};
+use store::{Column, GenericColumn, MessageSend, TableStore};
 
 // Custom argument parsing
 pub mod args;
@@ -580,6 +580,51 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
                 print!("\rRow #{}", num_chunks);
                 io::stdout().flush().unwrap();
             }
+        }
+        {
+            let mut sends = store.sends.write();
+            sends.retain_mut(|send_msg| {
+                let values: Vec<(&str, f64)> = send_msg
+                    .content
+                    .iter()
+                    .map(|(name, value)| (&**name, *value))
+                    .collect();
+                let id = dbc.messages().find(&send_msg.name).unwrap().id();
+                let extended = dbc.messages().find(&send_msg.name).unwrap().is_extended();
+                if let Ok(payload) = dbc.encode(id, &values, extended) {
+                    match input {
+                        InputSource::File(ref mut _filestream) => {
+                            println!("You can't send data into a file!")
+                        }
+                        InputSource::Stdin((ref mut _parser, ref mut _inputstream)) => {
+                            println!("You can't send data into stin!")
+                        }
+                        #[cfg(feature = "socket")]
+                        InputSource::Can(ref mut socketwrapper) => {
+                            socketwrapper.send(id, payload.to_vec());
+                        }
+                        #[cfg(feature = "peak-can")]
+                        InputSource::Peak(ref mut socketwrapper) => {
+                            socketwrapper.send(id, payload.to_vec());
+                        }
+                        InputSource::Tcp(ref mut _networkwrapper) => {
+                            println!("You can't yet send data over TCP!");
+                        }
+                        InputSource::Udp(ref mut _networkwrapper) => {
+                            println!("You can't yet send data over UDP!");
+                        }
+                    }
+                } else {
+                    println!("some kinda encoding error");
+                }
+
+                if send_msg.repeat <= 1 {
+                    false // last repeat done: drop it from the vec
+                } else {
+                    send_msg.repeat -= 1;
+                    true // keep it for the next round
+                }
+            });
         }
     }
     println!("");

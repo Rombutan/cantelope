@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["plot", "not_wasm"]
+default = ["plot", "not_wasm", "socket"]
 socket = ["dep:socketcan"]
 peak-can = ["dep:peak-can"]
 plot = ["dep:plotters-iced2", "dep:plotters", "dep:iced", "dep:iced_aw"]

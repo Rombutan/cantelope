@@ -1,4 +1,4 @@
-use socketcan::{CanFrame, CanSocket, EmbeddedFrame, Frame, Socket};
+use socketcan::{CanFrame, CanSocket, EmbeddedFrame, Frame, Socket, embedded_can};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct CanWrapper {
@@ -44,6 +44,15 @@ impl CanWrapper {
         }
 
         Ok(())
+    }
+
+    pub fn send(&self, id: u32, data: Vec<u8>) {
+        let frame: CanFrame = CanFrame::new(
+            socketcan::Id::Standard(embedded_can::StandardId::new(id as u16).unwrap()),
+            &data,
+        )
+        .unwrap();
+        self.socket.write_frame(&frame).unwrap()
     }
 
     pub fn get_timestamp(&self) -> f64 {
