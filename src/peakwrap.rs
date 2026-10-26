@@ -1,6 +1,6 @@
 use peak_can::bus::UsbBus;
 use peak_can::socket::usb::UsbCanSocket;
-use peak_can::socket::{Baudrate, RecvCan};
+use peak_can::socket::{Baudrate, RecvCan, SendCan};
 use std::thread::sleep;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -97,12 +97,10 @@ impl CanWrapper {
     }
 
     pub fn send(&self, id: u32, data: Vec<u8>) {
-        let frame: CanFrame = CanFrame::new(
-            socketcan::Id::Standard(embedded_can::StandardId::new(id as u16).unwrap()),
-            &data,
-        )
-        .unwrap();
-        self.socket.write_frame(&frame).unwrap()
+        let frame: peak_can::socket::CanFrame =
+            peak_can::socket::CanFrame::new(id, peak_can::socket::MessageType::Standard, &data)
+                .unwrap();
+        self.socket.send(frame).unwrap()
     }
 
     pub fn get_timestamp(&self) -> f64 {
