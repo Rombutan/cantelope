@@ -38,6 +38,7 @@ Conveniently available is the sender binary which transmits packets in the appro
   - If no input argument is provided, cantelope will default to candump mode and try to call system gui for file selection.
   -  `--candump | -f` tells cantelope to use a file for input. File must be specified.
   - `--socket | -s` tells cantelope to use a (specified) socketcan interface for input. If `--features socket` was not built, cantelope will panic.
+  - `--parquet | -q` loads a parquet file written by cantelope (same columns as the DBC) straight into the store, skipping the data loop. Useful for plotting a past recording.
   - `--tcp` tells cantelope to establish a tcp connection at specififed `ip:port`. Intended for use with sender and relay binaries.
   - `--udp` is not currently implemented. Behavior unknown.
 - `--output | -o` tells cantelope to store data and ultimately output a parquet file with the specified name. Data is limited to memory size for now.

@@ -9,6 +9,7 @@ pub enum CanDataInput {
     File,
     Socket,
     Peak,
+    Parquet,
     TcpRemote,
     UdpRemote,
 }
@@ -94,6 +95,9 @@ Options:                        If no options, use file picker for config.
                                 Expects format:
                                 `(time in seconds) interface 0xid#0xdata`
                                 which is the default of `candump -L`.
+    [--parquet | -q file.parquet]
+                                Loads a previously written parquet file
+                                instead of live/log input.
     [--tcp ip:port]             Sets TCP client mode and server address.
     [--socket | -s can0]        Uses a socketcan interface for input,
                                 only available if compiled with option.
@@ -198,6 +202,11 @@ pub fn process_args() -> Args {
             #[cfg(not(feature = "socket"))]
             "--socketout" | "-s" => {
                 panic!("Socketcan feature disabled!")
+            }
+
+            "--parquet" | "-q" => {
+                args.candatainput = CanDataInput::Parquet;
+                args.input = argsi.next().expect("--parquet requires a value");
             }
 
             "--tcp" => {

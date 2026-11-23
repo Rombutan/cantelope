@@ -7,6 +7,7 @@ use dbc_rs::Message;
 use std::collections::HashMap;
 
 use parquet::arrow::ArrowWriter;
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::file::properties::WriterProperties;
 use std::fs::File;
 
@@ -620,4 +621,113 @@ pub fn write_record_batch_to_parquet(
     writer.close()?;
 
     Ok(())
+}
+
+impl GenericColumn {
+    /// An empty column of the variant matching an Arrow type, if this store supports it.
+    fn empty_for(data_type: &DataType) -> Option<GenericColumn> {
+        Some(match data_type {
+            DataType::Boolean => GenericColumn::Bool(Column::new()),
+            DataType::Int8 => GenericColumn::I8(Column::new()),
+            DataType::Int16 => GenericColumn::I16(Column::new()),
+            DataType::Int32 => GenericColumn::I32(Column::new()),
+            DataType::Int64 => GenericColumn::I64(Column::new()),
+            DataType::Float32 => GenericColumn::F32(Column::new()),
+            DataType::Float64 => GenericColumn::F64(Column::new()),
+            _ => return None,
+        })
+    }
+
+    /// Appends every row of an Arrow array, keeping its null mask.
+    /// Errors if the array's type doesn't match this column's variant.
+    fn append_array(&mut self, array: &ArrayRef) -> Result<(), String> {
+        fn extend_primitive<A: ArrowPrimitiveType>(
+            col: &mut Column<A::Native>,
+            arr: &PrimitiveArray<A>,
+        ) {
+            col.values.extend_from_slice(arr.values());
+            match arr.nulls() {
+                Some(nulls) => col.valid.extend(nulls.iter()),
+                None => col.valid.resize(col.valid.len() + arr.len(), true),
+            }
+        }
+
+        let mismatch = || format!("array type {:?} doesn't match column", array.data_type());
+        match self {
+            GenericColumn::Bool(c) => {
+                let arr = array.as_boolean_opt().ok_or_else(mismatch)?;
+                for i in 0..arr.len() {
+                    c.push(arr.is_valid(i).then(|| arr.value(i)));
+                }
+            }
+            GenericColumn::I8(c) => extend_primitive(
+                c,
+                array.as_primitive_opt::<Int8Type>().ok_or_else(mismatch)?,
+            ),
+            GenericColumn::I16(c) => extend_primitive(
+                c,
+                array.as_primitive_opt::<Int16Type>().ok_or_else(mismatch)?,
+            ),
+            GenericColumn::I32(c) => extend_primitive(
+                c,
+                array.as_primitive_opt::<Int32Type>().ok_or_else(mismatch)?,
+            ),
+            GenericColumn::I64(c) => extend_primitive(
+                c,
+                array.as_primitive_opt::<Int64Type>().ok_or_else(mismatch)?,
+            ),
+            GenericColumn::F32(c) => extend_primitive(
+                c,
+                array
+                    .as_primitive_opt::<Float32Type>()
+                    .ok_or_else(mismatch)?,
+            ),
+            GenericColumn::F64(c) => extend_primitive(
+                c,
+                array
+                    .as_primitive_opt::<Float64Type>()
+                    .ok_or_else(mismatch)?,
+            ),
+        }
+        Ok(())
+    }
+}
+
+/// Reads an entire parquet file into the store, replacing whatever columns it held.
+pub fn load_parquet(
+    file: File,
+    cols: &mut RwLockWriteGuard<'_, Vec<GenericColumn>>,
+) -> Result<Arc<Schema>, Box<dyn std::error::Error>> {
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
+    let schema = builder.schema().clone();
+    let reader = builder.build()?;
+
+    let mut new_cols = Vec::with_capacity(schema.fields().len());
+    for field in schema.fields() {
+        new_cols.push(GenericColumn::empty_for(field.data_type()).ok_or_else(|| {
+            format!(
+                "unsupported parquet column type {:?} for '{}'",
+                field.data_type(),
+                field.name()
+            )
+        })?);
+    }
+    if !matches!(new_cols.first(), Some(GenericColumn::F64(_))) {
+        return Err("first parquet column must be the f64 time column".into());
+    }
+
+    for batch in reader {
+        let batch = batch?;
+        for ((col, array), field) in new_cols
+            .iter_mut()
+            .zip(batch.columns())
+            .zip(schema.fields())
+        {
+            col.append_array(array)
+                .map_err(|e| format!("column '{}': {}", field.name(), e))?;
+        }
+    }
+
+    **cols = new_cols;
+    Ok(schema)
 }

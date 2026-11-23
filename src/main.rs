@@ -14,7 +14,7 @@ use std::io::{self, Write};
 // Custom data storage helpers
 pub mod store;
 use std::collections::HashMap;
-use store::{Column, GenericColumn, MessageSend, TableStore};
+use store::{Column, GenericColumn, MessageSend, TableStore, load_parquet};
 
 // Custom argument parsing
 pub mod args;
@@ -133,7 +133,9 @@ fn main() {
         start_args = args::process_args();
     }
 
-    if start_args.dbcfile == "".to_string() {
+    let parquet_input = matches!(start_args.candatainput, CanDataInput::Parquet);
+
+    if start_args.dbcfile == "".to_string() && !parquet_input {
         let files = FileDialog::new()
             .add_filter("dbc", &["dbc", "DBC"])
             .set_title("Choose DBC File")
@@ -148,7 +150,11 @@ fn main() {
 
     let args = start_args;
 
-    let dbc_content = fs::read_to_string(&args.dbcfile).expect("Could not read DBC file"); // Load DBC file contents into string
+    let dbc_content = if parquet_input {
+        String::new()
+    } else {
+        fs::read_to_string(&args.dbcfile).expect("Could not read DBC file") // Load DBC file contents into string
+    };
 
     let args_en_aux = args.en_aux;
 
@@ -158,6 +164,10 @@ fn main() {
 
     let data_store = store.clone_ref();
     let handle = std::thread::spawn(move || {
+        if matches!(args_data_thread.candatainput, CanDataInput::Parquet) {
+            parquet_in(&args_data_thread, data_store);
+            return;
+        }
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
@@ -180,12 +190,12 @@ fn main() {
     let _ = handle.join();
 }
 
-async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
-    let dbc;
-    match Dbc::parse(&dbc_content) {
+/// Parses the DBC, or prints where it failed and exits.
+fn parse_dbc(dbc_content: &str) -> Dbc {
+    match Dbc::parse(dbc_content) {
         Ok(v) => {
-            dbc = v;
             println!("DBC Succesfully parsed!");
+            v
         }
         Err(v) => {
             let line: String;
@@ -228,7 +238,103 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
             }
             std::process::exit(78);
         }
-    } // Parse DBC
+    }
+}
+
+/// Messages grouped by the node that sends them (used by plot).
+fn build_nodes(dbc: &Dbc) -> HashMap<String, Vec<Message>> {
+    let mut nodes: HashMap<String, Vec<Message>> = Default::default();
+    for node in dbc.nodes().iter() {
+        if nodes.insert(node.to_string(), vec![]).is_some() {
+            panic!("Duplicate node: {}", node);
+        }
+    }
+    for message in dbc.messages().iter() {
+        nodes
+            .entry(message.sender().to_string())
+            .or_default()
+            .push(message.clone());
+    }
+    nodes
+}
+
+/// Node that holds every signal when loading parquet (there is no DBC to say who sends what).
+const PARQUET_NODE: &str = "VECTOR_XXX";
+
+fn is_dbc_identifier(name: &str) -> bool {
+    let mut chars = name.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// One placeholder node containing a one-signal message per parquet column, so the signal
+/// tables still have something to show. The messages come from a throwaway in-memory DBC
+/// (not the user's DBC file); they can't be sent or decoded.
+fn placeholder_nodes(signal_names: &[String]) -> HashMap<String, Vec<Message>> {
+    let mut text = format!("VERSION \"\"\n\nNS_ :\n\nBS_:\n\nBU_: {PARQUET_NODE}\n\n");
+    let mut id: u32 = 0;
+    for name in signal_names.iter().filter(|n| is_dbc_identifier(n)) {
+        id += 1;
+        text.push_str(&format!(
+            "BO_ {} {name}: 1 {PARQUET_NODE}\n SG_ {name} : 0|1@1+ (1,0) [0|1] \"\" Vector__XXX\n\n",
+            id | 0x8000_0000 // extended, so there's no 2047 message limit
+        ));
+    }
+
+    match Dbc::parse(&text) {
+        Ok(dbc) => build_nodes(&dbc),
+        Err(e) => {
+            println!("Could not build placeholder signal list: {:?}", e);
+            HashMap::from([(PARQUET_NODE.to_string(), vec![])])
+        }
+    }
+}
+
+/// Parquet input: loads a whole parquet file into the store instead of running the data loop.
+/// No DBC is read; every signal is filed under one placeholder node.
+fn parquet_in(args: &args::Args, store: TableStore) {
+    let file = File::open(&args.input).unwrap_or_else(|e| {
+        println!("Could not open parquet file {}: {}", args.input, e);
+        std::process::exit(74);
+    });
+
+    let schema = {
+        let mut write_cols = store.write_columns();
+        load_parquet(file, &mut write_cols).unwrap_or_else(|e| {
+            println!("Could not read parquet file {}: {}", args.input, e);
+            std::process::exit(74);
+        })
+    };
+
+    {
+        let mut write_signalmap = store.signalmap.write();
+        write_signalmap.clear();
+        for (index, field) in schema.fields().iter().enumerate() {
+            write_signalmap.insert(field.name().to_string(), index);
+        }
+    }
+
+    // Column 0 is the time column, everything after it is a signal.
+    let signal_names: Vec<String> = schema
+        .fields()
+        .iter()
+        .skip(1)
+        .map(|f| f.name().to_string())
+        .collect();
+    *store.nodes.write() = placeholder_nodes(&signal_names);
+
+    let rows = store.read_columns().first().map_or(0, |c| c.len());
+    println!(
+        "Loaded {} rows and {} signals from parquet",
+        rows,
+        signal_names.len()
+    );
+
+    store.set_ready();
+}
+
+async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
+    let dbc = parse_dbc(dbc_content);
 
     // ------- CREATE SCHEMA
     let mut base_row_size = 0; // Just to generate a cool "uncompressed data rate" number
@@ -354,6 +460,7 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
     let epoch = time::Instant::now();
 
     let input = match &args.candatainput {
+        CanDataInput::Parquet => unreachable!("parquet input is handled by parquet_in"),
         CanDataInput::File => {
             open_interface::<can_interfaces::filewrap::FileWrapper>(&args.input, "input file")
         }
@@ -423,50 +530,50 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
             data,
         }) = rx
         {
-        #[cfg(feature = "socket")]
-        {
-            if let Some(socket) = &outsocket {
-                socket.send(&Frame {
-                    id,
-                    extended,
-                    data: data.clone(),
-                });
-            }
-        }
-
-        last_time_ms = (timestamp - time_start) * 1000.0; // time since start of recording
-
-        match dbc.decode(id, &data, false) {
-            Ok(decoded) => {
-                let mut write_col = store.write_columns();
-                for signal in decoded.iter() {
-                    let index = store
-                        .signalmap
-                        .read()
-                        .get(signal.name)
-                        .expect("Schema, map, or column vector poisoned")
-                        .clone();
-                    if is_filled.len() <= index {
-                        println!("Signal out of range: {} at index: {}", signal.name, index);
-                    }
-                    if !is_filled[index] {
-                        match &mut write_col[index] {
-                            GenericColumn::Bool(c) => c.push(Some(signal.value.is_nearly(1.0))),
-                            GenericColumn::I8(c) => c.push(Some(signal.value as i8)),
-                            GenericColumn::I32(c) => c.push(Some(signal.value as i32)),
-                            GenericColumn::I64(c) => c.push(Some(signal.value as i64)),
-                            //                            GenericColumn::F16(c) => c.push(Some(f16::from(signal.value))),
-                            GenericColumn::F32(c) => c.push(Some(signal.value as f32)),
-                            GenericColumn::F64(c) => c.push(Some(signal.value)),
-                            _ => {}
-                        }
-                        is_filled[index] = true;
-                    }
+            #[cfg(feature = "socket")]
+            {
+                if let Some(socket) = &outsocket {
+                    socket.send(&Frame {
+                        id,
+                        extended,
+                        data: data.clone(),
+                    });
                 }
             }
-            Err(e) => println!("Signal: {} Data: {:02x?}  Error: {}", id, &data, e),
-            //Err(e) => _ = e,
-        }
+
+            last_time_ms = (timestamp - time_start) * 1000.0; // time since start of recording
+
+            match dbc.decode(id, &data, false) {
+                Ok(decoded) => {
+                    let mut write_col = store.write_columns();
+                    for signal in decoded.iter() {
+                        let index = store
+                            .signalmap
+                            .read()
+                            .get(signal.name)
+                            .expect("Schema, map, or column vector poisoned")
+                            .clone();
+                        if is_filled.len() <= index {
+                            println!("Signal out of range: {} at index: {}", signal.name, index);
+                        }
+                        if !is_filled[index] {
+                            match &mut write_col[index] {
+                                GenericColumn::Bool(c) => c.push(Some(signal.value.is_nearly(1.0))),
+                                GenericColumn::I8(c) => c.push(Some(signal.value as i8)),
+                                GenericColumn::I32(c) => c.push(Some(signal.value as i32)),
+                                GenericColumn::I64(c) => c.push(Some(signal.value as i64)),
+                                //                            GenericColumn::F16(c) => c.push(Some(f16::from(signal.value))),
+                                GenericColumn::F32(c) => c.push(Some(signal.value as f32)),
+                                GenericColumn::F64(c) => c.push(Some(signal.value)),
+                                _ => {}
+                            }
+                            is_filled[index] = true;
+                        }
+                    }
+                }
+                Err(e) => println!("Signal: {} Data: {:02x?}  Error: {}", id, &data, e),
+                //Err(e) => _ = e,
+            }
         }
         let relative_time_rcv = last_time_ms;
 
@@ -554,5 +661,30 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
         println!("");
         println!("Done!");
         writer.close().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn placeholder_nodes_from_fs_dbc() {
+        let dbc = Dbc::parse(&std::fs::read_to_string("fs.dbc").unwrap()).unwrap();
+        let names: Vec<String> = dbc
+            .messages()
+            .iter()
+            .flat_map(|m| {
+                m.signals()
+                    .iter()
+                    .map(|s| s.name().to_string())
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let nodes = placeholder_nodes(&names);
+        let msgs = nodes.get(PARQUET_NODE).expect("placeholder node");
+        println!("signals {} messages {}", names.len(), msgs.len());
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(msgs.len(), names.len());
     }
 }
