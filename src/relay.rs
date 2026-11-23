@@ -1,22 +1,55 @@
+use bytemuck::{Pod, Zeroable};
 use std::env;
 use std::io::Write;
 use std::net::{TcpListener, TcpStream};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::broadcast;
 use udp_stream::UdpListener;
 use udp_stream::UdpStream;
 
-pub mod tcpwrapper;
-pub mod udpwrapper;
+mod can_interfaces;
+use can_interfaces::tcpwrapper::TcpWrapper;
+use can_interfaces::udpwrapper::UdpWrapper;
+use can_interfaces::{CanFrameData, CanInterface, Frame};
+
+// SocketCAN's extended-frame flag, as used on the wire
+const EFF_FLAG: u32 = 0x8000_0000;
+
+// 24-byte wire format shared with the cantelope TCP/UDP wrappers
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+struct WireFrame {
+    timestamp: f64,
+    id: u32,
+    _pad: u32,
+    data: [u8; 8],
+}
+
+fn encode(frame: &Frame) -> Vec<u8> {
+    let mut data = [0u8; 8];
+    let len = frame.data.len().min(8);
+    data[..len].copy_from_slice(&frame.data[..len]);
+
+    let wire = WireFrame {
+        timestamp: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0),
+        id: if frame.extended {
+            frame.id | EFF_FLAG
+        } else {
+            frame.id
+        },
+        _pad: 0,
+        data,
+    };
+    bytemuck::bytes_of(&wire).to_vec()
+}
 
 enum NetworkServer {
     Tcp(TcpListener),
     Udp(UdpListener),
-}
-
-enum NetworkClient {
-    Tcp(tcpwrapper::TcpWrapper),
-    Udp(udpwrapper::UdpWrapper),
 }
 
 #[tokio::main]
@@ -35,36 +68,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let netmode = args[3].clone();
     let local_port = format!("0.0.0.0:{}", args[4]);
 
-    let input = match r_t_u.as_str() {
-        "-t" => NetworkClient::Tcp(tcpwrapper::TcpWrapper::new(remote_addr.as_str())),
-        "-u" => NetworkClient::Udp(udpwrapper::UdpWrapper::new(remote_addr.as_str()).await),
+    let input: Box<dyn CanInterface + Send> = match r_t_u.as_str() {
+        "-t" => Box::new(TcpWrapper::new(remote_addr.as_str()).expect("Failed to connect (TCP)")),
+        "-u" => Box::new(UdpWrapper::new(remote_addr.as_str()).expect("Failed to connect (UDP)")),
         _ => panic!("Unknown server type: use -t (TCP) or -u (UDP)"),
     };
 
     let (tx, _) = broadcast::channel::<Vec<u8>>(32);
 
-    match input {
-        NetworkClient::Tcp(mut tcp_wrapper) => {
-            let tx_tcp = tx.clone();
-            tokio::task::spawn_blocking(move || {
-                loop {
-                    if let Ok(content) = tcp_wrapper.parse() {
-                        let _ = tx_tcp.send(content);
-                    }
+    // Both wrappers block in parse(), so read them on a blocking thread.
+    let tx_in = tx.clone();
+    tokio::task::spawn_blocking(move || {
+        loop {
+            match input.parse() {
+                Ok(CanFrameData { frame, .. }) => {
+                    let _ = tx_in.send(encode(&frame));
                 }
-            });
-        }
-        NetworkClient::Udp(mut udp_wrapper) => {
-            let tx_udp = tx.clone();
-            tokio::spawn(async move {
-                loop {
-                    if let Ok(content) = udp_wrapper.parse().await {
-                        let _ = tx_udp.send(content);
-                    }
+                Err(e) => {
+                    eprintln!("Relay input error: {}", e);
+                    std::thread::sleep(Duration::from_millis(1)); // don't spin on a dead link
                 }
-            });
+            }
         }
-    }
+    });
 
     // 4. Server task
     let server_enum = match netmode.as_str() {

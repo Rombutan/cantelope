@@ -21,30 +21,13 @@ pub mod args;
 use std::env;
 use std::sync::Arc;
 
-// Custom Candump parsing
-use candump::CanDumpParser;
-
-// Custom TCP Can interface
-pub mod tcpwrapper;
-pub mod udpwrapper;
-
 use crate::args::Args;
 use crate::args::CanDataInput;
 
-// SocketCAN
-#[cfg(feature = "socket")]
-pub mod socketwrap;
+mod can_interfaces;
+use can_interfaces::{CanFrameData, CanInterface, EndOfInput, Frame};
 
-#[cfg(feature = "socket")]
-pub mod socketout;
-
-#[cfg(feature = "socket")]
-use socketout::CanOutWrapper;
-
-#[cfg(feature = "peak-can")]
-pub mod peakwrap;
-
-// Use ctrl+c as exit signal in stdin and socket mode
+// Use ctrl+c as exit signal in socket mode
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{process, thread, time};
 
@@ -72,15 +55,39 @@ impl FloatExt for f64 {
     }
 }
 
-enum InputSource {
-    File(CanDumpParser),
-    #[cfg(feature = "socket")]
-    Can(socketwrap::CanWrapper),
-    #[cfg(feature = "peak-can")]
-    Peak(peakwrap::CanWrapper),
-    Tcp(tcpwrapper::TcpWrapper),
-    Udp(udpwrapper::UdpWrapper),
-    Stdin((CanDumpParser, io::Stdin)),
+/// One received frame: time in seconds, raw id, payload.
+struct RxFrame {
+    timestamp: f64,
+    id: u32,
+    extended: bool,
+    data: Vec<u8>,
+}
+
+/// Every input (file, SocketCAN, PCAN, TCP, UDP) implements `CanInterface`.
+fn open_interface<T: CanInterface + 'static>(iface: &str, what: &str) -> Box<dyn CanInterface> {
+    Box::new(T::new(iface).unwrap_or_else(|| panic!("Failed to open {what}")))
+}
+
+/// Blocks until the next data frame; None once the input is exhausted (end of file).
+/// `epoch` converts the interface's `Instant`s to seconds.
+fn next_frame(input: &dyn CanInterface, epoch: time::Instant) -> Option<RxFrame> {
+    loop {
+        match input.parse() {
+            Ok(CanFrameData { frame, time }) => {
+                return Some(RxFrame {
+                    timestamp: time.duration_since(epoch).as_secs_f64(),
+                    id: frame.id,
+                    extended: frame.extended,
+                    data: frame.data,
+                });
+            }
+            Err(e) if e.is::<EndOfInput>() => return None,
+            Err(e) => {
+                println!("CAN receive error: {}", e);
+                thread::sleep(time::Duration::from_millis(1)); // don't spin on a dead link
+            }
+        }
+    }
 }
 
 fn main() {
@@ -343,96 +350,50 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
 
     println!("Schema created");
 
-    let mut input: InputSource;
-    let inputname = &args.candatainput.clone();
-    match inputname {
+    // Interface frames carry an `Instant`; measure them from here (before opening the input).
+    let epoch = time::Instant::now();
+
+    let input = match &args.candatainput {
         CanDataInput::File => {
-            input = InputSource::File(CanDumpParser::new(&args.input).unwrap());
-        }
-        CanDataInput::Stdin => {
-            input =
-                InputSource::Stdin((CanDumpParser::new(&String::default()).unwrap(), io::stdin()));
+            open_interface::<can_interfaces::filewrap::FileWrapper>(&args.input, "input file")
         }
         #[cfg(feature = "socket")]
         CanDataInput::Socket => {
-            input = InputSource::Can(
-                socketwrap::CanWrapper::new(&args.input).expect("Failed to open CAN Socket?\n"),
-            );
+            open_interface::<can_interfaces::socketwrap::CanWrapper>(&args.input, "CAN socket")
         }
         #[cfg(not(feature = "socket"))]
-        CanDataInput::Socket => {
-            panic!("Socketcan not enabled in this build")
-        }
+        CanDataInput::Socket => panic!("Socketcan not enabled in this build"),
         #[cfg(feature = "peak-can")]
-        CanDataInput::Peak => {
-            input =
-                InputSource::Peak(peakwrap::CanWrapper::new(args.peakbaudrate.clone()).unwrap());
-        }
+        CanDataInput::Peak => open_interface::<can_interfaces::peakwrap::CanWrapper>(
+            &args.peakbaudrate.to_string(),
+            "PCAN interface",
+        ),
         #[cfg(not(feature = "peak-can"))]
-        CanDataInput::Peak => {
-            panic!("Peak-Can not enabled in this build")
-        }
+        CanDataInput::Peak => panic!("Peak-Can not enabled in this build"),
         CanDataInput::TcpRemote => {
-            input = InputSource::Tcp(tcpwrapper::TcpWrapper::new(&args.input));
+            open_interface::<can_interfaces::tcpwrapper::TcpWrapper>(&args.input, "TCP relay")
         }
         CanDataInput::UdpRemote => {
-            let addr = args.input.clone();
-            input = InputSource::Udp(udpwrapper::UdpWrapper::new(&addr).await);
+            open_interface::<can_interfaces::udpwrapper::UdpWrapper>(&args.input, "UDP relay")
         }
-    }
+    };
 
     println!("Input created!");
 
     #[cfg(feature = "socket")]
-    let use_outsocket = !args.socketout.is_empty();
-
-    #[cfg(feature = "socket")]
-    let mut outsocket = if use_outsocket {
-        Some(CanOutWrapper::new(&args.socketout).expect("Failed to open output CAN Socket?\n"))
-    } else {
+    let outsocket = if args.socketout.is_empty() {
         None
+    } else {
+        Some(open_interface::<can_interfaces::socketwrap::CanWrapper>(
+            &args.socketout,
+            "output CAN socket",
+        ))
     };
-
-    let time_start;
-    match input {
-        InputSource::File(ref mut filestream) => {
-            filestream.parse();
-            time_start = filestream.get_timestamp();
-        }
-        InputSource::Stdin((ref mut parser, ref mut inputstream)) => {
-            let mut nextline = String::new();
-            match inputstream.read_line(&mut nextline) {
-                Ok(_n) => {}
-                Err(msg) => {
-                    println!("While trying to read from stdin: {}", msg);
-                    std::process::exit(74);
-                }
-            }
-            _ = parser.parse_string(nextline);
-            time_start = parser.get_timestamp();
-        }
-        #[cfg(feature = "socket")]
-        InputSource::Can(ref mut socketwrapper) => {
-            socketwrapper.parse().unwrap();
-            time_start = socketwrapper.get_timestamp();
-        }
-        #[cfg(feature = "peak-can")]
-        InputSource::Peak(ref mut socketwrapper) => {
-            socketwrapper.parse().unwrap();
-            time_start = socketwrapper.get_timestamp();
-        }
-        InputSource::Tcp(ref mut networkwrapper) => {
-            networkwrapper.parse().unwrap();
-            time_start = networkwrapper.get_timestamp();
-        }
-        InputSource::Udp(ref mut networkwrapper) => {
-            networkwrapper.parse().await.unwrap();
-            time_start = networkwrapper.get_timestamp();
-        }
-    }
 
     let exit = Arc::new(AtomicBool::new(false));
     let ex = exit.clone();
+
+    let time_start = next_frame(&*input, epoch).map_or(0.0, |f| f.timestamp);
 
     #[cfg(feature = "not_wasm")]
     ctrlc::set_handler(move || {
@@ -446,75 +407,34 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
     .expect("Error setting Ctrl-C handler");
 
     let mut num_chunks = 1;
+    let mut last_time_ms: f64 = 0.0;
     while !exit.load(Ordering::SeqCst) {
         let mut offset: f64 = 0.0;
 
         // Message recieve loop
-        let timestamp;
-        let id;
-        let data;
-
-        match input {
-            InputSource::File(ref mut filestream) => {
-                if filestream.parse() {
-                    exit.store(true, Ordering::SeqCst);
-                }
-                timestamp = filestream.get_timestamp();
-                id = filestream.get_id();
-                data = filestream.get_data();
-            }
-            InputSource::Stdin((ref mut parser, ref mut inputstream)) => {
-                let mut nextline = String::new();
-                match inputstream.read_line(&mut nextline) {
-                    Ok(_n) => {}
-                    Err(msg) => {
-                        println!("While trying to read from stdin: {}", msg);
-                        std::process::exit(74);
-                    }
-                }
-                exit.store(parser.parse_string(nextline), Ordering::SeqCst);
-                timestamp = parser.get_timestamp();
-                id = parser.get_id();
-                data = parser.get_data();
-            }
-            #[cfg(feature = "socket")]
-            InputSource::Can(ref mut socketwrapper) => {
-                socketwrapper.parse().unwrap();
-                timestamp = socketwrapper.get_timestamp();
-                id = socketwrapper.get_id();
-                data = socketwrapper.get_data();
-            }
-            #[cfg(feature = "peak-can")]
-            InputSource::Peak(ref mut socketwrapper) => {
-                socketwrapper.parse().unwrap();
-                timestamp = socketwrapper.get_timestamp();
-                id = socketwrapper.get_id();
-                data = socketwrapper.get_data();
-            }
-            InputSource::Tcp(ref mut networkwrapper) => {
-                let _ = networkwrapper.parse();
-                timestamp = networkwrapper.get_timestamp();
-                id = networkwrapper.get_id();
-                data = networkwrapper.get_data();
-            }
-            InputSource::Udp(ref mut networkwrapper) => {
-                networkwrapper.parse().await.unwrap();
-                timestamp = networkwrapper.get_timestamp();
-                id = networkwrapper.get_id();
-                data = networkwrapper.get_data();
-            }
+        let rx = next_frame(&*input, epoch);
+        if rx.is_none() {
+            exit.store(true, Ordering::SeqCst); // end of input: still flush the last row below
         }
-
+        if let Some(RxFrame {
+            timestamp,
+            id,
+            extended,
+            data,
+        }) = rx
+        {
         #[cfg(feature = "socket")]
         {
-            if use_outsocket {
-                if let Some(ref mut socket) = outsocket {
-                    _ = socket.send(id, &data);
-                }
+            if let Some(socket) = &outsocket {
+                socket.send(&Frame {
+                    id,
+                    extended,
+                    data: data.clone(),
+                });
             }
         }
 
-        let relative_time_rcv = (timestamp - time_start) * 1000.0; // time since start of recording
+        last_time_ms = (timestamp - time_start) * 1000.0; // time since start of recording
 
         match dbc.decode(id, &data, false) {
             Ok(decoded) => {
@@ -547,6 +467,8 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
             Err(e) => println!("Signal: {} Data: {:02x?}  Error: {}", id, &data, e),
             //Err(e) => _ = e,
         }
+        }
+        let relative_time_rcv = last_time_ms;
 
         if relative_time_rcv > (&args.cache_ms * f64::from(num_chunks) + offset)
             || exit.load(Ordering::SeqCst)
@@ -592,28 +514,11 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
                 let id = dbc.messages().find(&send_msg.name).unwrap().id();
                 let extended = dbc.messages().find(&send_msg.name).unwrap().is_extended();
                 if let Ok(payload) = dbc.encode(id, &values, extended) {
-                    match input {
-                        InputSource::File(ref mut _filestream) => {
-                            println!("You can't send data into a file!")
-                        }
-                        InputSource::Stdin((ref mut _parser, ref mut _inputstream)) => {
-                            println!("You can't send data into stin!")
-                        }
-                        #[cfg(feature = "socket")]
-                        InputSource::Can(ref mut socketwrapper) => {
-                            socketwrapper.send(id, payload.to_vec());
-                        }
-                        #[cfg(feature = "peak-can")]
-                        InputSource::Peak(ref mut socketwrapper) => {
-                            socketwrapper.send(id, payload.to_vec());
-                        }
-                        InputSource::Tcp(ref mut _networkwrapper) => {
-                            println!("You can't yet send data over TCP!");
-                        }
-                        InputSource::Udp(ref mut _networkwrapper) => {
-                            println!("You can't yet send data over UDP!");
-                        }
-                    }
+                    input.send(&Frame {
+                        id,
+                        extended,
+                        data: payload.to_vec(),
+                    });
                 } else {
                     println!("some kinda encoding error");
                 }

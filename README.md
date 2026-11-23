@@ -12,11 +12,11 @@ Example:
 ```
 ./cantelope --dbc fs.dbc --candump realdata.log --cache-ms 10 --output testi.parquet
 ```
-You can also use `--stdin` or  `--socket` instead of `--candump`.
+You can also use `--socket` instead of `--candump`.
 
 If you don't pass `--output`, cantelope won't store values. This is useful for using the live plotting function. Memory usage should be <100mb under this circumstance.
 
-`--stdin` and `--candump` expect line seperated frames in the following format `(time in seconds) interface id_in_hex#data_in_hex` Ex:
+`--candump` expects line seperated frames in the following format `(time in seconds) interface id_in_hex#data_in_hex` Ex:
 ```
 (1759876075.171400) can0 288#8A2C642B00000000
 ```
@@ -38,7 +38,6 @@ Conveniently available is the sender binary which transmits packets in the appro
   - If no input argument is provided, cantelope will default to candump mode and try to call system gui for file selection.
   -  `--candump | -f` tells cantelope to use a file for input. File must be specified.
   - `--socket | -s` tells cantelope to use a (specified) socketcan interface for input. If `--features socket` was not built, cantelope will panic.
-  - `--stdin | -t` tells cantelope to use stdin in the same format as `--candump`
   - `--tcp` tells cantelope to establish a tcp connection at specififed `ip:port`. Intended for use with sender and relay binaries.
   - `--udp` is not currently implemented. Behavior unknown.
 - `--output | -o` tells cantelope to store data and ultimately output a parquet file with the specified name. Data is limited to memory size for now.

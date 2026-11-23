@@ -3,7 +3,6 @@ use arrow::buffer::{BooleanBuffer, NullBuffer};
 use arrow::datatypes::*;
 use arrow::record_batch::RecordBatch;
 use dbc_rs::Message;
-use iced::widget::toggler::default;
 
 use std::collections::HashMap;
 
