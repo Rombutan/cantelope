@@ -28,7 +28,7 @@ udp-stream = "0.0.12"
 socket2 = "0.6.3"
 
 # stuff for gui
-iced = { version = "0.14", features = ["canvas", "tokio"], optional = true}
+iced = { version = "0.14", features = ["canvas", "tokio", "image"], optional = true}
 iced_web = {version="0.4", optional = true}
 plotters = {version = "0.3", optional = true}
 plotters-iced2 = {version = "0.14", optional = true}

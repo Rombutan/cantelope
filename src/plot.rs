@@ -1,8 +1,9 @@
 use iced::Alignment::Center;
+use iced::window;
 use iced::{
     Background, Element, Length, Padding, Size, Subscription, Theme, alignment, keyboard, time,
     widget::Button, widget::Column, widget::Row, widget::Text, widget::responsive, widget::rule,
-    widget::scrollable, widget::text_input,
+    widget::scrollable, widget::text_input, window::icon::from_file_data,
 };
 use iced_aw::{helpers::card, style};
 
@@ -136,7 +137,11 @@ impl PlotWindow {
         .subscription(PlotWindow::subscription)
         .title("Cantelope")
         .theme(state_to_theme)
-        .window_size(Size::new(1400.0, 1000.0))
+        .window(iced::window::Settings {
+            size: Size::new(1400.0, 1000.0),
+            icon: from_file_data(include_bytes!("../icon.png"), None).ok(),
+            ..Default::default()
+        })
         .centered()
         .run()
     }
