@@ -14,7 +14,7 @@ use std::io::{self, Write};
 // Custom data storage helpers
 pub mod store;
 use std::collections::HashMap;
-use store::{Column, GenericColumn, MessageSend, TableStore, load_parquet};
+use store::{Column, GenericColumn, TableStore, load_parquet};
 
 // Custom argument parsing
 pub mod args;
@@ -516,8 +516,6 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
     let mut num_chunks = 1;
     let mut last_time_ms: f64 = 0.0;
     while !exit.load(Ordering::SeqCst) {
-        let mut offset: f64 = 0.0;
-
         // Message recieve loop
         let rx = next_frame(&*input, epoch);
         if rx.is_none() {
@@ -577,15 +575,9 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
         }
         let relative_time_rcv = last_time_ms;
 
-        if relative_time_rcv > (&args.cache_ms * f64::from(num_chunks) + offset)
+        if relative_time_rcv > (&args.cache_ms * f64::from(num_chunks))
             || exit.load(Ordering::SeqCst)
         {
-            if ((&args.cache_ms * f64::from(num_chunks) + offset) - relative_time_rcv)
-                > 2.0 * &args.cache_ms
-            {
-                offset += (&args.cache_ms * f64::from(num_chunks) + offset) - relative_time_rcv;
-            }
-
             num_chunks += 1;
 
             let mut write_cols = store.write_columns();

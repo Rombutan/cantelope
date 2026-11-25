@@ -13,7 +13,6 @@ use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::fmt::Write;
 use std::hash::{Hash, Hasher};
-use std::thread::current;
 use std::time::Instant;
 use std::{f64, usize};
 
