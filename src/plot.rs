@@ -21,6 +21,8 @@ use crate::store::{self, MessageSend, TableStore};
 use crate::args::{self, CanDataInput};
 use args::Args;
 
+pub const WINDOW_TITLE: &str = concat!("Cantelope  -  ", env!("GIT_HASH"));
+
 const MIN_PLOT_HEIGHT: f32 = 150.0; // smallest a plot is allowed to get
 const PLOT_SPACING: f32 = 5.0;
 
@@ -147,7 +149,7 @@ impl PlotWindow {
             PlotWindow::view,
         )
         .subscription(PlotWindow::subscription)
-        .title("Cantelope")
+        .title(WINDOW_TITLE)
         .theme(state_to_theme)
         .window(iced::window::Settings {
             size: Size::new(1400.0, 1000.0),
@@ -291,7 +293,8 @@ impl PlotWindow {
                 text_input("3000", &self.time_range_text)
                     .on_input(Message::TimeRange)
                     .width(100),
-            );
+            )
+            .push(Text::new(format!("File: {}", self.args.input.clone())).align_y(Center));
 
         let status_row =
             self.args

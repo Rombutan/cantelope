@@ -6,6 +6,7 @@ use std::fs;
 use arrow::datatypes::{DataType, Field, Schema};
 use parquet::arrow::ArrowWriter;
 use parquet::file::properties::WriterProperties;
+use sha2::{Digest, Sha256};
 use std::fs::File;
 
 // Literally only for cleaner print
@@ -41,6 +42,9 @@ use plot::PlotWindow;
 pub type DataPoint = (String, f64, f64); // (signal, x, y)
 
 use rfd::FileDialog;
+
+pub const GIT_HASH: &str = env!("GIT_HASH");
+pub const BUILD_TIME: &str = env!("BUILD_TIME");
 
 // Used for type decisions only
 trait FloatExt {
@@ -335,6 +339,7 @@ fn parquet_in(args: &args::Args, store: TableStore) {
 
 async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
     let dbc = parse_dbc(dbc_content);
+    let dbc_sha = format!("{:x}", Sha256::digest(dbc_content.as_bytes()));
 
     // ------- CREATE SCHEMA
     let mut base_row_size = 0; // Just to generate a cool "uncompressed data rate" number
@@ -637,6 +642,7 @@ async fn data_loop(args: args::Args, dbc_content: &String, store: TableStore) {
         print!("Writing Out Stored Data");
         let props = WriterProperties::builder()
             .set_compression(parquet::basic::Compression::SNAPPY)
+            .set_created_by(format!("cantelope (github.com/rombutan/cantelope) hash: {}, build: {}, with dbc: {}, hash: {}", GIT_HASH, BUILD_TIME, args.dbcfile.clone(), dbc_sha))
             .build();
         let mut writer = ArrowWriter::try_new(
             File::create(&args.output).unwrap(),
