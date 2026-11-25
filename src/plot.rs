@@ -1,5 +1,4 @@
 use iced::Alignment::Center;
-use iced::window;
 use iced::{
     Background, Element, Length, Padding, Size, Subscription, Theme, alignment, keyboard, time,
     widget::Button, widget::Column, widget::Row, widget::Text, widget::responsive, widget::rule,
@@ -14,12 +13,13 @@ use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::fmt::Write;
 use std::hash::{Hash, Hasher};
+use std::thread::current;
 use std::time::Instant;
 use std::{f64, usize};
 
 use crate::store::{self, MessageSend, TableStore};
 
-use crate::args;
+use crate::args::{self, CanDataInput};
 use args::Args;
 
 const MIN_PLOT_HEIGHT: f32 = 150.0; // smallest a plot is allowed to get
@@ -111,14 +111,27 @@ impl PlotWindow {
         iced::application(
             {
                 move || {
+                    let time_range;
+                    if args.candatainput == CanDataInput::Parquet {
+                        let cols = store.read_columns();
+                        let current_index = cols.first().unwrap().len() - 1;
+                        time_range = match cols.first() {
+                            Some(store::GenericColumn::F64(c)) if !c.values.is_empty() => {
+                                c.values[current_index]
+                            }
+                            _ => 30000.0,
+                        };
+                    } else {
+                        time_range = 3000.0
+                    }
                     (
                         PlotWindow {
                             store: store.clone_ref(),
                             last_redraw: Instant::now(),
                             args: args.clone(),
                             play: true,
-                            time_range_text: String::from("3000"),
-                            x_window: 3000.0,
+                            time_range_text: (time_range as u32).to_string(),
+                            x_window: time_range,
                             x_end: 0.0,
                             x_live_attach: true,
                             theme_mode: iced::theme::Mode::Light,
@@ -263,11 +276,17 @@ impl PlotWindow {
     fn view(&self) -> Element<'_, Message> {
         use iced::widget::row;
 
-        let controls = Row::new()
+        let mut controls = Row::new()
             .spacing(10)
             .padding(10)
-            .push(Button::new("Plots").on_press(Message::SetTab(Tab::Plot)))
-            .push(Button::new("Signals").on_press(Message::SetTab(Tab::Signals)))
+            .push(Button::new("Plots").on_press(Message::SetTab(Tab::Plot)));
+
+        if self.args.candatainput != CanDataInput::Parquet {
+            controls =
+                controls.push(Button::new("Signals").on_press(Message::SetTab(Tab::Signals)));
+        }
+
+        controls = controls
             .push(Text::new(format!("Period(ms):")).align_y(Center))
             .push(
                 text_input("3000", &self.time_range_text)
