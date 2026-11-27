@@ -119,9 +119,9 @@ impl<'a> Chart<Message> for SignalChart<'a> {
         let n = self.toplot.len().max(1);
 
         let mut chart_lines: Vec<(&String, RGBColor, LineSeries<DB, (f64, f64)>)> = vec![];
-        for (i, name) in self.toplot.iter().enumerate() {
-            let signal_map = self.store.signalmap.read();
 
+        let signal_map = self.store.signalmap.read();
+        for (i, name) in self.toplot.iter().enumerate() {
             let Some(&col_index) = signal_map.get(name) else {
                 continue;
             };
@@ -209,10 +209,29 @@ impl<'a> Chart<Message> for SignalChart<'a> {
         for (name, color, chart_line) in chart_lines {
             let style = color.stroke_width(3);
 
-            // Use series.y_min and series.y_max to construct your Cartesian 2D scale!
+            let Some(&col_index) = signal_map.get(name) else {
+                continue;
+            };
+
+            let hist = self.store.get_period_hist_by_index(&columns, col_index);
+            let freq_hz = hist
+                .and_then(|h| {
+                    h.into_iter()
+                        .filter(|&(p, _)| p > 0.0)
+                        .max_by_key(|&(_, c)| c)
+                })
+                .map(|(p, _)| 1000.0 / p);
 
             let mut series_name = name.clone().to_string();
-            write!(series_name, "              ",).unwrap();
+            write!(
+                series_name,
+                // Plotters computes the size of the background
+                // rectangle to draw behind the legend incorrectly, so...
+                ": {:.1}hz              ",
+                // 1000.0 / (tengap / 100.0)
+                freq_hz.unwrap_or(0.0)
+            )
+            .unwrap();
             chart
                 .draw_series(chart_line)
                 .unwrap()

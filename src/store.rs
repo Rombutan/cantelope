@@ -15,6 +15,73 @@ use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
+pub const PERIOD_BIN_PRECISION: f64 = 5.0;
+
+#[derive(Default, Clone)]
+struct SignalProgress {
+    rows_done: usize,    // rows of the column already consumed
+    last_t: Option<f64>, // time of the last valid sample seen
+}
+
+#[derive(Default)]
+struct PeriodHistCache {
+    /// hists[signal] = (period, count), kept sorted by period
+    hists: Vec<Vec<(f64, usize)>>,
+    progress: Vec<SignalProgress>,
+}
+
+impl PeriodHistCache {
+    fn clear(&mut self) {
+        self.hists.clear();
+        self.progress.clear();
+    }
+
+    fn bump(hist: &mut Vec<(f64, usize)>, period: f64) {
+        // Snap to the nearest bin. Same arithmetic every time, so equal bins
+        // produce bit-identical floats and compare cleanly.
+        let snapped = (period / PERIOD_BIN_PRECISION).round() * PERIOD_BIN_PRECISION;
+        match hist.binary_search_by(|(p, _)| p.total_cmp(&snapped)) {
+            Ok(i) => hist[i].1 += 1,
+            Err(i) => hist.insert(i, (snapped, 1)),
+        }
+    }
+
+    /// Consumes any rows added since the last call for this signal.
+    fn update(&mut self, cols: &[GenericColumn], idx: usize) -> Option<()> {
+        let target = cols.get(idx)?;
+        let GenericColumn::F64(time) = cols.first()? else {
+            panic!("Time column must be F64");
+        };
+        let n = time.len();
+
+        if self.hists.len() <= idx {
+            self.hists.resize_with(idx + 1, Vec::new);
+            self.progress.resize_with(idx + 1, SignalProgress::default);
+        }
+        let prog = &mut self.progress[idx];
+        let hist = &mut self.hists[idx];
+
+        if prog.rows_done >= n {
+            return Some(()); // already current
+        }
+
+        let (t_vals, t_valid) = time.get_slice(prog.rows_done, n)?;
+        let sig = target.iter_as_f64(prog.rows_done, n)?;
+
+        for (i, (_, valid)) in sig.enumerate() {
+            if valid && t_valid[i] {
+                let t = t_vals[i];
+                if let Some(prev) = prog.last_t {
+                    Self::bump(hist, t - prev);
+                }
+                prog.last_t = Some(t);
+            }
+        }
+        prog.rows_done = n;
+        Some(())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct MessageSend {
     pub name: String,
@@ -38,6 +105,7 @@ pub struct TableStore {
     pub sends: Arc<RwLock<Vec<MessageSend>>>,
     ready_state: Arc<(Mutex<bool>, Condvar)>, // Ready is set once schema is complete. Once set, cannot be unset.
     converted: Arc<Mutex<usize>>,
+    period_cache: Arc<Mutex<PeriodHistCache>>,
 }
 
 impl TableStore {
@@ -50,6 +118,7 @@ impl TableStore {
             signalmap: Arc::new(RwLock::new(HashMap::new())),
             sends: Arc::new(RwLock::new(Vec::new())),
             converted: Arc::new(Mutex::new(0)),
+            period_cache: Arc::new(Mutex::new(PeriodHistCache::default())),
         }
     }
 
@@ -82,6 +151,7 @@ impl TableStore {
             signalmap: Arc::clone(&self.signalmap),
             sends: Arc::clone(&self.sends),
             converted: Arc::clone(&self.converted),
+            period_cache: Arc::clone(&self.period_cache),
         }
     }
 
@@ -251,6 +321,16 @@ impl TableStore {
         }
         *cursor = cursor.saturating_sub(k);
         k
+    }
+
+    pub fn get_period_hist_by_index(
+        &self,
+        cols: &[GenericColumn],
+        index: usize,
+    ) -> Option<Vec<(f64, usize)>> {
+        let mut cache = self.period_cache.lock().expect("Mutex poisoned");
+        cache.update(cols, index)?;
+        Some(cache.hists[index].clone())
     }
 }
 
