@@ -115,7 +115,6 @@ impl<'a> Chart<Message> for SignalChart<'a> {
             Some(store::GenericColumn::F64(_)) | None => (0, 0, 0.0, 0.0),
             Some(_) => panic!("Time column must be F64"),
         };
-        let mut chart_lines: Vec<(&String, LineSeries<DB, (f64, f64)>)> = vec![];
 
         let n = self.toplot.len().max(1);
 
@@ -213,15 +212,7 @@ impl<'a> Chart<Message> for SignalChart<'a> {
             // Use series.y_min and series.y_max to construct your Cartesian 2D scale!
 
             let mut series_name = name.clone().to_string();
-            write!(
-                series_name,
-                // Plotters computes the size of the background
-                // rectangle to draw behind the legend incorrectly, so...
-                ": {:.1}hz              ",
-                // 1000.0 / (tengap / 100.0)
-                100.0
-            )
-            .unwrap();
+            write!(series_name, "              ",).unwrap();
             chart
                 .draw_series(chart_line)
                 .unwrap()
@@ -240,21 +231,6 @@ impl<'a> Chart<Message> for SignalChart<'a> {
                     .unwrap();
             }
         }
-        // for (t, v) in all_points_iter {
-        //     if t - last_time > (tengap / 100.0) * 1.5 {
-        //         // Should break on a missed or highly delayed packet
-        //         chart
-        //             .draw_series(LineSeries::new(cur_seg.clone(), style))
-        //             .unwrap();
-        //         cur_seg.clear()
-        //     } else {
-        //         tengap = tengap * 0.99;
-        //         tengap = tengap + (t - last_time);
-        //     }
-
-        //     cur_seg.push((t, v));
-        //     last_time = t;
-        // }
 
         chart
             .configure_series_labels()
