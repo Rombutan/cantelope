@@ -16,6 +16,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 pub const PERIOD_BIN_PRECISION: f64 = 5.0;
+pub const META_CHUNK_LENGTH: usize = 100;
 
 #[derive(Clone)]
 pub struct StridedPoints<'a> {
@@ -316,11 +317,44 @@ impl TableStore {
 
         let (mut y_min, mut y_max) = (f64::INFINITY, f64::NEG_INFINITY);
         let mut any = false;
-        for (_, y) in points.clone() { // Only ref clone
-            any = true;
-            y_min = y_min.min(y);
-            y_max = y_max.max(y);
+
+        let block_meta: Option<&[Meta]> = match col {
+            GenericColumn::F64(c) => Some(&c.meta_cache),
+            GenericColumn::F32(c) => Some(&c.meta_cache),
+            GenericColumn::I8(c) => Some(&c.meta_cache),
+            GenericColumn::I16(c) => Some(&c.meta_cache),
+            GenericColumn::I32(c) => Some(&c.meta_cache),
+            GenericColumn::I64(c) => Some(&c.meta_cache),
+            GenericColumn::Bool(_) => None,
+        };
+
+        if let Some(metas) = block_meta.filter(|_| n > 10 * META_CHUNK_LENGTH) {
+            let range_end = end_idx.saturating_sub(1);
+            for meta in metas {
+                if meta.index_start > range_end {
+                    break;
+                }
+                if meta.index_end < start_idx {
+                    continue;
+                }
+                if meta.min != f64::INFINITY {
+                    any = true;
+                    y_min = y_min.min(meta.min);
+                }
+                if meta.max != f64::NEG_INFINITY {
+                    any = true;
+                    y_max = y_max.max(meta.max);
+                }
+            }
+        } else {
+            for (_, y) in points.clone() {
+                // Only ref clone
+                any = true;
+                y_min = y_min.min(y);
+                y_max = y_max.max(y);
+            }
         }
+
         if !any {
             return None;
         }
@@ -415,32 +449,107 @@ impl TableStore {
         cache.update(cols, index)?;
         Some(cache.hists[index].clone())
     }
+
+    pub fn recompute_metas(cols: &mut [GenericColumn]) {
+        for col in cols {
+            col.recompute_metas();
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct Meta {
+    pub index_start: usize,
+    pub index_end: usize,
+    pub max: f64,
+    pub avg: f64,
+    pub min: f64,
+    pub num_points: usize,
+}
+
+impl Meta {
+    fn new(index_start: usize) -> Self {
+        Self {
+            index_start,
+            index_end: index_start,
+            max: f64::NEG_INFINITY,
+            avg: 0.0,
+            min: f64::INFINITY,
+            num_points: 0,
+        }
+    }
+
+    fn record_valid(&mut self, index: usize, val: f64) {
+        self.index_end = index;
+        if val.is_nan() {
+            return;
+        }
+        self.num_points += 1;
+        let n = self.num_points as f64;
+        if self.num_points == 1 {
+            self.min = val;
+            self.max = val;
+            self.avg = val;
+        } else {
+            if val < self.min {
+                self.min = val;
+            }
+            if val > self.max {
+                self.max = val;
+            }
+            self.avg += (val - self.avg) / n;
+        }
+    }
+
+    fn record_null(&mut self, index: usize) {
+        self.index_end = index;
+    }
 }
 
 pub struct Column<T> {
     pub values: Vec<T>,
     pub valid: Vec<bool>, // true = valid, false = null
+    pub meta_cache: Vec<Meta>,
     last_valid: Option<usize>,
 }
 
-impl<T: Default + Copy> Column<T> {
+impl<T: Default + Copy + IntoF64> Column<T> {
     pub fn new() -> Self {
         Self {
             values: Vec::new(),
             valid: Vec::new(),
+            meta_cache: Vec::new(),
             last_valid: None,
         }
     }
 
     pub fn push(&mut self, value: Option<T>) {
+        let idx = self.values.len();
+        let block_start = (idx / META_CHUNK_LENGTH) * META_CHUNK_LENGTH;
+
+        let needs_new_block = match self.meta_cache.last() {
+            None => true,
+            Some(last) => idx > last.index_end && (idx - last.index_start) >= META_CHUNK_LENGTH,
+        };
+        if needs_new_block {
+            self.meta_cache.push(Meta::new(block_start));
+        }
+
         match value {
             Some(v) => {
                 self.values.push(v);
                 self.valid.push(true);
+                self.last_valid = Some(idx);
+                if let Some(meta) = self.meta_cache.last_mut() {
+                    meta.record_valid(idx, v.into_f64());
+                }
             }
             None => {
                 self.values.push(T::default());
                 self.valid.push(false);
+                if let Some(meta) = self.meta_cache.last_mut() {
+                    meta.record_null(idx);
+                }
             }
         }
     }
@@ -502,15 +611,121 @@ impl<T: Default + Copy> Column<T> {
         Column {
             values: self.values[start..end].to_vec(),
             valid: self.valid[start..end].to_vec(),
+            meta_cache: self.meta_cache[start..end].to_vec(),
             last_valid: self.last_valid_index_scan(),
         }
     }
 
-    /// Drops the oldest `n` rows.
     pub fn drop_front(&mut self, n: usize) {
+        if n == 0 || self.values.is_empty() {
+            return;
+        }
+
+        let n = n.min(self.values.len());
         self.values.drain(..n);
         self.valid.drain(..n);
         self.last_valid = self.last_valid.and_then(|i| i.checked_sub(n));
+
+        // Drop blocks completely before the new front (`index_end < n`).
+        self.meta_cache.retain(|m| m.index_end >= n);
+
+        // Shift remaining block indices left by `n`.
+        for meta in &mut self.meta_cache {
+            meta.index_start = meta.index_start.saturating_sub(n);
+            meta.index_end = meta.index_end.saturating_sub(n);
+        }
+
+        // If the first remaining block now starts at 0 and still spans elements,
+        // recompute its stats so dropped front points do not skew min/avg/max.
+        if let Some(first) = self.meta_cache.first_mut() {
+            if first.index_start == 0 && !self.values.is_empty() {
+                let end_idx = first.index_end.min(self.values.len() - 1);
+                let mut rebuilt = Meta::new(0);
+                for i in 0..=end_idx {
+                    if self.valid[i] {
+                        rebuilt.record_valid(i, self.values[i].into_f64());
+                    } else {
+                        rebuilt.record_null(i);
+                    }
+                }
+                *first = rebuilt;
+            }
+        }
+    }
+
+    pub fn recompute_metas(&mut self) {
+        self.meta_cache.clear();
+        self.last_valid = None;
+
+        if self.values.is_empty() {
+            return;
+        }
+
+        let len = self.values.len();
+        let mut block_start = 0usize;
+
+        while block_start < len {
+            let block_end = (block_start + META_CHUNK_LENGTH).min(len) - 1;
+            let mut meta = Meta::new(block_start);
+
+            for idx in block_start..=block_end {
+                if *self.valid.get(idx).unwrap_or(&false) {
+                    self.last_valid = Some(idx);
+                    meta.record_valid(idx, self.values[idx].into_f64());
+                } else {
+                    meta.record_null(idx);
+                }
+            }
+
+            self.meta_cache.push(meta);
+            block_start += META_CHUNK_LENGTH;
+        }
+    }
+}
+
+pub trait IntoF64 {
+    fn into_f64(self) -> f64;
+}
+
+impl IntoF64 for f64 {
+    fn into_f64(self) -> f64 {
+        self
+    }
+}
+
+impl IntoF64 for f32 {
+    fn into_f64(self) -> f64 {
+        self as f64
+    }
+}
+
+impl IntoF64 for i8 {
+    fn into_f64(self) -> f64 {
+        self as f64
+    }
+}
+
+impl IntoF64 for i16 {
+    fn into_f64(self) -> f64 {
+        self as f64
+    }
+}
+
+impl IntoF64 for i32 {
+    fn into_f64(self) -> f64 {
+        self as f64
+    }
+}
+
+impl IntoF64 for i64 {
+    fn into_f64(self) -> f64 {
+        self as f64
+    }
+}
+
+impl IntoF64 for bool {
+    fn into_f64(self) -> f64 {
+        (self as u8) as f64
     }
 }
 
@@ -751,6 +966,18 @@ impl GenericColumn {
             GenericColumn::F64(c) => c.drop_front(n),
         }
     }
+
+    pub fn recompute_metas(&mut self) {
+        match self {
+            GenericColumn::Bool(c) => c.recompute_metas(),
+            GenericColumn::I8(c) => c.recompute_metas(),
+            GenericColumn::I16(c) => c.recompute_metas(),
+            GenericColumn::I32(c) => c.recompute_metas(),
+            GenericColumn::I64(c) => c.recompute_metas(),
+            GenericColumn::F32(c) => c.recompute_metas(),
+            GenericColumn::F64(c) => c.recompute_metas(),
+        }
+    }
 }
 
 pub fn finish_record_batch(columns: Vec<GenericColumn>, schema: Arc<Schema>) -> RecordBatch {
@@ -907,5 +1134,7 @@ pub fn load_parquet(
     }
 
     **cols = new_cols;
+
+    TableStore::recompute_metas(cols);
     Ok(schema)
 }
