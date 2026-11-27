@@ -4,17 +4,36 @@ use crate::store;
 use plotters::prelude::*;
 use plotters_iced2::{Chart, ChartBuilder};
 use std::cell::Cell;
-use std::collections::hash_map::DefaultHasher;
 use std::fmt::Write;
-use std::hash::{Hash, Hasher};
 
-fn int_from_str(name: &str) -> usize {
-    let mut hasher = DefaultHasher::new();
-    name.hash(&mut hasher);
-    let hash = hasher.finish();
+fn color_from_angle(angle: usize) -> RGBColor {
+    // Hue from the angle, 0..360
+    let hue = (angle % 360) as f64;
+    // Optional: small deterministic variation so neighbors differ more
+    let sat = 0.65 + ((angle >> 16) % 12) as f64 / 100.0; // 0.65..0.84
+    let lum = 0.45 + ((angle >> 24) % 7) as f64 / 100.0; // 0.45..0.54
 
-    // Use modulo to pick an index safely
-    hash as usize
+    hsl_to_rgb(hue, sat, lum)
+}
+
+fn hsl_to_rgb(h: f64, s: f64, l: f64) -> RGBColor {
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let hp = h / 60.0;
+    let x = c * (1.0 - (hp % 2.0 - 1.0).abs());
+    let (r1, g1, b1) = match hp as u32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let m = l - c / 2.0;
+    RGBColor(
+        ((r1 + m) * 255.0).round() as u8,
+        ((g1 + m) * 255.0).round() as u8,
+        ((b1 + m) * 255.0).round() as u8,
+    )
 }
 
 #[derive(Clone, Copy)]
@@ -97,22 +116,27 @@ impl<'a> Chart<Message> for SignalChart<'a> {
             Some(_) => panic!("Time column must be F64"),
         };
         let mut chart_lines: Vec<(&String, LineSeries<DB, (f64, f64)>)> = vec![];
-        for name in self.toplot.iter() {
+
+        let n = self.toplot.len().max(1);
+
+        let mut chart_lines: Vec<(&String, RGBColor, LineSeries<DB, (f64, f64)>)> = vec![];
+        for (i, name) in self.toplot.iter().enumerate() {
             let signal_map = self.store.signalmap.read();
 
             let Some(&col_index) = signal_map.get(name) else {
                 continue;
             };
 
-            if let Some(series) = self.store.get_plot_series(
-                &columns,
-                col_index, // No need for cloning if we copy/dereference the index
-                start_index,
-                stop_index,
-            ) {
-                let style = Palette99::pick(int_from_str(name)).stroke_width(3);
+            if let Some(series) =
+                self.store
+                    .get_plot_series(&columns, col_index, start_index, stop_index)
+            {
+                // Evenly spaced: 0, 360/n, 2*360/n, ...
+                let color = color_from_angle(i * 360 / n);
+                let style = color.stroke_width(3);
                 chart_lines.push((
                     name,
+                    color,
                     plotters::series::LineSeries::new(series.coords, style),
                 ));
 
@@ -183,8 +207,8 @@ impl<'a> Chart<Message> for SignalChart<'a> {
             .draw()
             .unwrap();
 
-        for (name, chart_line) in chart_lines {
-            let style = Palette99::pick(int_from_str(name)).stroke_width(3);
+        for (name, color, chart_line) in chart_lines {
+            let style = color.stroke_width(3);
 
             // Use series.y_min and series.y_max to construct your Cartesian 2D scale!
 
