@@ -9,6 +9,7 @@ use iced_aw::{helpers::card, style};
 use iced::widget::{container, text};
 use plotters::prelude::*;
 use plotters_iced2::{Chart, ChartBuilder, ChartWidget};
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::fmt::Write;
@@ -33,6 +34,33 @@ fn int_from_str(name: &str) -> usize {
 
     // Use modulo to pick an index safely
     hash as usize
+}
+
+#[derive(Clone, Copy)]
+struct PlotLayout {
+    left: f32,
+    right: f32,
+    min_x: f64,
+    max_x: f64,
+}
+
+impl PlotLayout {
+    fn time_at(&self, px: f32) -> f64 {
+        let f = ((px - self.left) / (self.right - self.left)).clamp(0.0, 1.0) as f64;
+        self.min_x + f * (self.max_x - self.min_x)
+    }
+    fn frac_at(&self, px: f32) -> f64 {
+        ((px - self.left) / (self.right - self.left)).clamp(0.0, 1.0) as f64
+    }
+}
+
+#[derive(Default)]
+struct ChartState {
+    // Written in build_chart (&State), read in update, hence Cell
+    layout: Cell<Option<PlotLayout>>,
+    // Drag selection, stored as times so it stays correct if data scrolls
+    drag_start: Option<f64>,
+    drag_cur: Option<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -75,6 +103,10 @@ pub enum Message {
         message: String,
         signal: String,
         value: String,
+    },
+    SetView {
+        start: f64,
+        end: f64,
     },
     Nothing,
 }
@@ -230,6 +262,17 @@ impl PlotWindow {
                 value,
             } => {
                 self.send_inputs.insert((message, signal), value);
+            }
+            Message::SetView { start, end } => {
+                let latest = self.store.get_latest_valid_value_by_index(0).unwrap_or(0.0);
+                self.x_window = (end - start).max(10.0); // 10 ms minimum
+                self.time_range_text = format!("{:.0}", self.x_window);
+                if end >= latest - 1e-3 {
+                    self.x_end = latest;
+                } else {
+                    self.x_end = end;
+                    self.x_live_attach = false;
+                }
             }
             Message::Nothing => {}
             _ => {}
@@ -420,7 +463,7 @@ struct SignalChart<'a> {
 }
 
 impl<'a> Chart<Message> for SignalChart<'a> {
-    type State = ();
+    type State = ChartState;
 
     fn build_chart<DB: DrawingBackend>(&self, state: &Self::State, mut builder: ChartBuilder<DB>) {
         _ = state;
@@ -501,6 +544,16 @@ impl<'a> Chart<Message> for SignalChart<'a> {
             .build_cartesian_2d(min_x..max_x, min_y - 0.01..max_y + 0.01)
             .unwrap();
 
+        let xr = chart.plotting_area().get_pixel_range().0;
+        if max_x > min_x && xr.end > xr.start {
+            state.layout.set(Some(PlotLayout {
+                left: xr.start as f32,
+                right: xr.end as f32,
+                min_x,
+                max_x,
+            }));
+        }
+
         let text_color = iced_color_to_plotters(self.theme.palette().text);
 
         chart
@@ -560,6 +613,18 @@ impl<'a> Chart<Message> for SignalChart<'a> {
                 .label(series_name)
                 .legend(move |(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], style));
         }
+
+        if let (Some(t0), Some(t1)) = (state.drag_start, state.drag_cur) {
+            let (a, b) = (t0.min(t1).max(min_x), t0.max(t1).min(max_x));
+            if b > a {
+                chart
+                    .draw_series(std::iter::once(Rectangle::new(
+                        [(a, min_y - 0.01), (b, max_y + 0.01)],
+                        text_color.mix(0.2).filled(),
+                    )))
+                    .unwrap();
+            }
+        }
         // for (t, v) in all_points_iter {
         //     if t - last_time > (tengap / 100.0) * 1.5 {
         //         // Should break on a missed or highly delayed packet
@@ -584,6 +649,87 @@ impl<'a> Chart<Message> for SignalChart<'a> {
             .label_font(("sans-serif", 12).into_font().color(&text_color))
             .draw()
             .unwrap();
+    }
+
+    fn update(
+        &self,
+        state: &mut Self::State,
+        event: &iced::Event,
+        bounds: iced::Rectangle,
+        cursor: iced::mouse::Cursor,
+    ) -> (iced::event::Status, Option<Message>) {
+        use iced::event::Status;
+        use iced::mouse::{Button, Event as Me, ScrollDelta};
+
+        let Some(layout) = state.layout.get() else {
+            return (Status::Ignored, None);
+        };
+        let Some(pos) = cursor.position() else {
+            return (Status::Ignored, None);
+        };
+        let px = pos.x - bounds.x;
+        let inside = bounds.contains(pos) && px >= layout.left && px <= layout.right;
+
+        let iced::Event::Mouse(ev) = event else {
+            return (Status::Ignored, None);
+        };
+
+        match ev {
+            Me::ButtonPressed(Button::Left) if inside => {
+                let t = layout.time_at(px);
+                state.drag_start = Some(t);
+                state.drag_cur = Some(t);
+                (Status::Captured, None)
+            }
+            Me::CursorMoved { .. } if state.drag_start.is_some() => {
+                state.drag_cur = Some(layout.time_at(px));
+                (Status::Captured, None)
+            }
+            Me::ButtonReleased(Button::Left) if state.drag_start.is_some() => {
+                let t0 = state.drag_start.take().unwrap();
+                state.drag_cur = None;
+                let t1 = layout.time_at(px);
+
+                // Ignore tiny drags
+                let per_px = (layout.max_x - layout.min_x) / (layout.right - layout.left) as f64;
+                if (t1 - t0).abs() >= 4.0 * per_px {
+                    (
+                        Status::Captured,
+                        Some(Message::SetView {
+                            start: t0.min(t1),
+                            end: t0.max(t1),
+                        }),
+                    )
+                } else {
+                    (Status::Captured, None)
+                }
+            }
+            Me::WheelScrolled { delta } if inside => {
+                let y = match delta {
+                    ScrollDelta::Lines { y, .. } => *y as f64,
+                    ScrollDelta::Pixels { y, .. } => *y as f64 / 50.0,
+                };
+                if y == 0.0 {
+                    return (Status::Ignored, None);
+                }
+                // Scroll up = zoom in
+                let old_window = layout.max_x - layout.min_x;
+                let new_window = (old_window * 0.85_f64.powf(y)).max(10.0);
+
+                let frac = layout.frac_at(px);
+                let t_cursor = layout.min_x + frac * old_window;
+                let start = t_cursor - frac * new_window;
+
+                (
+                    Status::Captured,
+                    Some(Message::SetView {
+                        start,
+                        end: start + new_window,
+                    }),
+                )
+            }
+            _ => (Status::Ignored, None),
+        }
     }
 }
 
