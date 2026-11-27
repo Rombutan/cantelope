@@ -296,17 +296,30 @@ impl<'a> Chart<Message> for SignalChart<'a> {
                 }
             }
             Me::WheelScrolled { delta } if inside => {
-                let y = match delta {
-                    ScrollDelta::Lines { y, .. } => *y as f64,
-                    ScrollDelta::Pixels { y, .. } => *y as f64 / 50.0,
+                let (dx, dy) = match delta {
+                    ScrollDelta::Lines { x, y } => (*x as f64, *y as f64),
+                    ScrollDelta::Pixels { x, y } => (*x as f64 / 50.0, *y as f64 / 50.0),
                 };
-                if y == 0.0 {
+
+                let old_window = layout.max_x - layout.min_x;
+
+                if dx.abs() > dy.abs() {
+                    let shift = -dx * old_window * 0.10;
+                    let start = layout.min_x + shift;
+                    return (
+                        Status::Captured,
+                        Some(Message::SetView {
+                            start,
+                            end: start + old_window,
+                        }),
+                    );
+                }
+
+                if dy == 0.0 {
                     return (Status::Ignored, None);
                 }
-                // Scroll up = zoom in
-                let old_window = layout.max_x - layout.min_x;
-                let new_window = (old_window * 0.85_f64.powf(y)).max(10.0);
 
+                let new_window = (old_window * 0.85_f64.powf(dy)).max(10.0);
                 let frac = layout.frac_at(px);
                 let t_cursor = layout.min_x + frac * old_window;
                 let start = t_cursor - frac * new_window;
