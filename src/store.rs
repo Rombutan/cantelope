@@ -17,6 +17,77 @@ use std::time::Duration;
 
 pub const PERIOD_BIN_PRECISION: f64 = 5.0;
 
+#[derive(Clone)]
+pub struct StridedPoints<'a> {
+    col: &'a GenericColumn,
+    time: &'a [f64],
+    time_valid: &'a [bool],
+    base: usize, // start_idx
+    pos: usize,  // next bucket start
+    n: usize,    // window length
+    stride: usize,
+}
+
+impl<'a> Iterator for StridedPoints<'a> {
+    type Item = (f64, f64);
+    fn next(&mut self) -> Option<(f64, f64)> {
+        while self.pos < self.n {
+            let lo = self.pos;
+            let hi = (lo + self.stride).min(self.n);
+            self.pos = hi;
+            for i in lo..hi {
+                if self.time_valid[i] {
+                    if let Some((v, true)) = self.col.value_at_f64(self.base + i) {
+                        return Some((self.time[i], v));
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
+pub struct Segmenter<'a> {
+    inner: std::iter::Peekable<StridedPoints<'a>>,
+    gap: f64,
+}
+
+impl<'a> Segmenter<'a> {
+    pub fn new(points: StridedPoints<'a>, gap: f64) -> Self {
+        Self {
+            inner: points.peekable(),
+            gap,
+        }
+    }
+
+    pub fn next_segment(&mut self) -> Option<Segment<'_, 'a>> {
+        self.inner.peek()?;
+        Some(Segment {
+            parent: self,
+            last_t: None,
+        })
+    }
+}
+
+pub struct Segment<'s, 'a> {
+    parent: &'s mut Segmenter<'a>,
+    last_t: Option<f64>,
+}
+
+impl Iterator for Segment<'_, '_> {
+    type Item = (f64, f64);
+    fn next(&mut self) -> Option<(f64, f64)> {
+        let &(t, _) = self.parent.inner.peek()?;
+        if let Some(lt) = self.last_t {
+            if t - lt > self.parent.gap {
+                return None; // gap: leave the point for the next segment
+            }
+        }
+        self.last_t = Some(t);
+        self.parent.inner.next()
+    }
+}
+
 #[derive(Default, Clone)]
 struct SignalProgress {
     rows_done: usize,    // rows of the column already consumed
@@ -90,10 +161,11 @@ pub struct MessageSend {
 }
 
 pub struct PlottableSeries<'a> {
-    /// The zero-allocation zipped coordinate iterator
-    pub coords: Box<dyn Iterator<Item = (f64, f64)> + 'a>,
+    pub points: StridedPoints<'a>,
+    pub gap: f64, // effective split threshold for the sampled points
     pub y_min: f64,
     pub y_max: f64,
+    pub downsample: usize,
 }
 
 pub struct TableStore {
@@ -212,31 +284,39 @@ impl TableStore {
 
     pub fn get_plot_series<'a>(
         &self,
-        cols: &'a [GenericColumn], // Pass the read guard's columns slice
+        cols: &'a [GenericColumn],
         target_col_idx: usize,
         start_idx: usize,
         end_idx: usize,
+        separate_threshold: f64,
+        max_points: usize,
     ) -> Option<PlottableSeries<'a>> {
-        let (time_vals, time_valids) = match &cols[0] {
+        let (time, time_valid) = match &cols[0] {
             GenericColumn::F64(c) => c.get_slice(start_idx, end_idx)?,
             _ => panic!("Time column must be F64"),
         };
+        let col = cols.get(target_col_idx)?;
 
-        let target_col = cols.get(target_col_idx)?;
+        let n = end_idx - start_idx;
+        let max_points = max_points.max(1);
+        let mut stride = 1usize;
+        while n.div_ceil(stride) > max_points {
+            stride *= 2;
+        }
 
-        let make_iter = move || {
-            target_col
-                .iter_as_f64(start_idx, end_idx)
-                .unwrap()
-                .enumerate()
-                .filter_map(move |(i, (val, valid))| {
-                    (valid && time_valids[i]).then(|| (time_vals[i], val))
-                })
+        let points = StridedPoints {
+            col,
+            time,
+            time_valid,
+            base: start_idx,
+            pos: 0,
+            n,
+            stride,
         };
 
         let (mut y_min, mut y_max) = (f64::INFINITY, f64::NEG_INFINITY);
         let mut any = false;
-        for (_, y) in make_iter() {
+        for (_, y) in points.clone() { // Only ref clone
             any = true;
             y_min = y_min.min(y);
             y_max = y_max.max(y);
@@ -246,9 +326,12 @@ impl TableStore {
         }
 
         Some(PlottableSeries {
-            coords: Box::new(make_iter()),
+            points,
+            // Sampled points are `stride` rows apart, so scale the threshold
+            gap: separate_threshold * stride as f64,
             y_min,
             y_max,
+            downsample: stride,
         })
     }
 
@@ -337,6 +420,7 @@ impl TableStore {
 pub struct Column<T> {
     pub values: Vec<T>,
     pub valid: Vec<bool>, // true = valid, false = null
+    last_valid: Option<usize>,
 }
 
 impl<T: Default + Copy> Column<T> {
@@ -344,6 +428,7 @@ impl<T: Default + Copy> Column<T> {
         Self {
             values: Vec::new(),
             valid: Vec::new(),
+            last_valid: None,
         }
     }
 
@@ -396,18 +481,20 @@ impl<T: Default + Copy> Column<T> {
     }
 
     /// Searches backwards from the end of the column to find the most recent
-    /// valid (non-null) value.
-    pub fn last_valid_value(&self) -> Option<T> {
-        // Walk backwards through the validity flags
-        let valid_idx = self
+    pub fn last_valid_index_scan(&self) -> Option<usize> {
+        let last_valid: Option<usize> = self
             .valid
             .iter()
             .enumerate()
             .rev()
             .find(|&(_, is_valid)| *is_valid)
-            .map(|(idx, _)| idx)?;
+            .map(|(idx, _)| idx);
 
-        Some(self.values[valid_idx])
+        last_valid
+    }
+
+    pub fn last_valid_value(&self) -> Option<T> {
+        self.last_valid.map(|i| self.values[i])
     }
 
     /// Owned copy of rows [start..end).
@@ -415,6 +502,7 @@ impl<T: Default + Copy> Column<T> {
         Column {
             values: self.values[start..end].to_vec(),
             valid: self.valid[start..end].to_vec(),
+            last_valid: self.last_valid_index_scan(),
         }
     }
 
@@ -422,6 +510,7 @@ impl<T: Default + Copy> Column<T> {
     pub fn drop_front(&mut self, n: usize) {
         self.values.drain(..n);
         self.valid.drain(..n);
+        self.last_valid = self.last_valid.and_then(|i| i.checked_sub(n));
     }
 }
 
@@ -548,6 +637,18 @@ impl GenericColumn {
                 Arc::new(Float64Array::new(c.values.clone().into(), Some(null_buf)))
             }
         }
+    }
+
+    pub fn value_at_f64(&self, i: usize) -> Option<(f64, bool)> {
+        Some(match self {
+            GenericColumn::Bool(c) => (if *c.values.get(i)? { 1.0 } else { 0.0 }, c.valid[i]),
+            GenericColumn::I8(c) => (*c.values.get(i)? as f64, c.valid[i]),
+            GenericColumn::I16(c) => (*c.values.get(i)? as f64, c.valid[i]),
+            GenericColumn::I32(c) => (*c.values.get(i)? as f64, c.valid[i]),
+            GenericColumn::I64(c) => (*c.values.get(i)? as f64, c.valid[i]),
+            GenericColumn::F32(c) => (*c.values.get(i)? as f64, c.valid[i]),
+            GenericColumn::F64(c) => (*c.values.get(i)?, c.valid[i]),
+        })
     }
 
     pub fn iter_as_f64<'a>(
@@ -706,10 +807,26 @@ impl GenericColumn {
             col: &mut Column<A::Native>,
             arr: &PrimitiveArray<A>,
         ) {
+            let base = col.values.len();
             col.values.extend_from_slice(arr.values());
-            match arr.nulls() {
-                Some(nulls) => col.valid.extend(nulls.iter()),
-                None => col.valid.resize(col.valid.len() + arr.len(), true),
+
+            // Newest valid row within the appended range, as an absolute index
+            let new_last = match arr.nulls() {
+                Some(nulls) => {
+                    col.valid.extend(nulls.iter());
+                    // Scan backward over only the new flags
+                    col.valid[base..].iter().rposition(|&v| v).map(|i| base + i)
+                }
+                None => {
+                    col.valid.resize(base + arr.len(), true);
+                    (arr.len() > 0).then(|| base + arr.len() - 1)
+                }
+            };
+
+            // Only overwrite if this batch contained a valid row; otherwise the
+            // previous batch's last valid index is still the newest
+            if new_last.is_some() {
+                col.last_valid = new_last;
             }
         }
 

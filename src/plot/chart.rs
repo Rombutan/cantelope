@@ -1,6 +1,6 @@
 use super::Message;
 use super::theme::iced_color_to_plotters;
-use crate::store;
+use crate::store::{self, Segmenter};
 use plotters::prelude::*;
 use plotters_iced2::{Chart, ChartBuilder};
 use std::cell::Cell;
@@ -118,7 +118,7 @@ impl<'a> Chart<Message> for SignalChart<'a> {
 
         let n = self.toplot.len().max(1);
 
-        let mut chart_lines: Vec<(&String, RGBColor, LineSeries<DB, (f64, f64)>)> = vec![];
+        let mut chart_lines: Vec<(&String, RGBColor, Option<f64>, store::PlottableSeries)> = vec![];
 
         let signal_map = self.store.signalmap.read();
         for (i, name) in self.toplot.iter().enumerate() {
@@ -126,18 +126,24 @@ impl<'a> Chart<Message> for SignalChart<'a> {
                 continue;
             };
 
-            if let Some(series) =
-                self.store
-                    .get_plot_series(&columns, col_index, start_index, stop_index)
-            {
+            let hist = self.store.get_period_hist_by_index(&columns, col_index);
+            let period_ms = hist.and_then(|h| {
+                h.into_iter()
+                    .filter(|&(p, _)| p > 0.0)
+                    .max_by_key(|&(_, c)| c)
+            });
+
+            if let Some(series) = self.store.get_plot_series(
+                &columns,
+                col_index,
+                start_index,
+                stop_index,
+                period_ms.unwrap_or((1000.0, 0)).0 * 2.0,
+                1080,
+            ) {
                 // Evenly spaced: 0, 360/n, 2*360/n, ...
                 let color = color_from_angle(i * 360 / n);
                 let style = color.stroke_width(3);
-                chart_lines.push((
-                    name,
-                    color,
-                    plotters::series::LineSeries::new(series.coords, style),
-                ));
 
                 if series.y_min < min_y {
                     min_y = series.y_min;
@@ -146,6 +152,13 @@ impl<'a> Chart<Message> for SignalChart<'a> {
                 if series.y_max > max_y {
                     max_y = series.y_max;
                 }
+
+                chart_lines.push((
+                    name,
+                    color,
+                    Some(period_ms.unwrap_or((1000.0, 0)).0),
+                    series,
+                ));
             }
         }
 
@@ -206,37 +219,26 @@ impl<'a> Chart<Message> for SignalChart<'a> {
             .draw()
             .unwrap();
 
-        for (name, color, chart_line) in chart_lines {
+        for (name, color, freq_hz, series) in chart_lines {
             let style = color.stroke_width(3);
 
-            let Some(&col_index) = signal_map.get(name) else {
-                continue;
-            };
+            let mut series_name = name.clone();
+            match freq_hz {
+                Some(f) => write!(series_name, ": {:.1}hz              ", f).unwrap(),
+                None => write!(series_name, ": --hz              ").unwrap(),
+            }
 
-            let hist = self.store.get_period_hist_by_index(&columns, col_index);
-            let freq_hz = hist
-                .and_then(|h| {
-                    h.into_iter()
-                        .filter(|&(p, _)| p > 0.0)
-                        .max_by_key(|&(_, c)| c)
-                })
-                .map(|(p, _)| 1000.0 / p);
-
-            let mut series_name = name.clone().to_string();
-            write!(
-                series_name,
-                // Plotters computes the size of the background
-                // rectangle to draw behind the legend incorrectly, so...
-                ": {:.1}hz              ",
-                // 1000.0 / (tengap / 100.0)
-                freq_hz.unwrap_or(0.0)
-            )
-            .unwrap();
-            chart
-                .draw_series(chart_line)
-                .unwrap()
-                .label(series_name)
-                .legend(move |(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], style));
+            let mut segmenter = Segmenter::new(series.points, series.gap);
+            let mut first = true;
+            while let Some(segment) = segmenter.next_segment() {
+                let drawn = chart.draw_series(LineSeries::new(segment, style)).unwrap();
+                if first {
+                    drawn
+                        .label(series_name.clone())
+                        .legend(move |(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], style));
+                    first = false;
+                }
+            }
         }
 
         if let (Some(t0), Some(t1)) = (state.drag_start, state.drag_cur) {
