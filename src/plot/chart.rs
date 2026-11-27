@@ -193,7 +193,7 @@ impl<'a> Chart<Message> for SignalChart<'a> {
             .x_label_formatter(&|x: &f64| {
                 let scaled_val = x / 1000.0;
 
-                if max_x - min_x < 100.0 {
+                if max_x - min_x < 10000.0 {
                     // Range is small: include 2 decimal places (adjust precision as desired)
                     format!("{:.2}", scaled_val)
                 } else {
