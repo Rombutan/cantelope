@@ -147,55 +147,36 @@ impl TableStore {
         start_idx: usize,
         end_idx: usize,
     ) -> Option<PlottableSeries<'a>> {
-        // 1. Extract the time slice ONCE
         let (time_vals, time_valids) = match &cols[0] {
             GenericColumn::F64(c) => c.get_slice(start_idx, end_idx)?,
             _ => panic!("Time column must be F64"),
         };
 
-        // 2. Extract the target column iterator
         let target_col = cols.get(target_col_idx)?;
 
-        // We will do a single-pass run to find the min and max of the visible window
-        let mut y_min = f64::INFINITY;
-        let mut y_max = f64::NEG_INFINITY;
+        let make_iter = move || {
+            target_col
+                .iter_as_f64(start_idx, end_idx)
+                .unwrap()
+                .enumerate()
+                .filter_map(move |(i, (val, valid))| {
+                    (valid && time_valids[i]).then(|| (time_vals[i], val))
+                })
+        };
 
-        // Materialize target iterator to calculate bounds
-        let target_iter = target_col.iter_as_f64(start_idx, end_idx)?;
-
-        // To calculate bounds without taking ownership of the iterator,
-        // we can peek at the data, but since we want to avoid double-iteration overhead,
-        // we map the iterator to track limits as values flow through it:
-        let bounded_iter = target_iter
-            .enumerate()
-            .filter_map(move |(i, (val, valid))| {
-                // Ensure both the time index and signal value are valid
-                if valid && time_valids[i] {
-                    let t = time_vals[i];
-                    return Some((t, val));
-                }
-                None
-            });
-
-        // Let's perform a fast bounding check on the target values
-        // (This replaces your previous separate bounds calculation loop)
-        let mut cached_points = Vec::with_capacity(end_idx - start_idx);
-        for (t, y) in bounded_iter {
-            if y < y_min {
-                y_min = y;
-            }
-            if y > y_max {
-                y_max = y;
-            }
-            cached_points.push((t, y));
+        let (mut y_min, mut y_max) = (f64::INFINITY, f64::NEG_INFINITY);
+        let mut any = false;
+        for (_, y) in make_iter() {
+            any = true;
+            y_min = y_min.min(y);
+            y_max = y_max.max(y);
         }
-
-        if cached_points.is_empty() {
+        if !any {
             return None;
         }
 
         Some(PlottableSeries {
-            coords: Box::new(cached_points.into_iter()),
+            coords: Box::new(make_iter()),
             y_min,
             y_max,
         })
