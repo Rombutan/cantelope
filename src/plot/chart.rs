@@ -89,6 +89,13 @@ impl<'a> Chart<Message> for SignalChart<'a> {
             Some(store::GenericColumn::F64(c)) if !c.values.is_empty() => {
                 let last = c.len() - 1;
 
+                let end_t = if *self.live_attach {
+                    c.values[last]
+                } else {
+                    *self.end_time
+                };
+                let start_t = (end_t - *self.time_range).max(-100.0);
+
                 let (start, stop) = if *self.live_attach {
                     // Live: window ends at the newest sample.
                     let now = c.values[last];
@@ -109,7 +116,7 @@ impl<'a> Chart<Message> for SignalChart<'a> {
                 let start = start.min(last);
                 let stop = stop.min(last);
 
-                (start, stop, c.values[start], c.values[stop])
+                (start, stop, start_t, end_t)
             }
             // Time column exists but has no rows yet, or schema not populated.
             Some(store::GenericColumn::F64(_)) | None => (0, 0, 0.0, 0.0),
